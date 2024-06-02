@@ -1,0 +1,12 @@
+{
+  "profiles": {
+    "Rosey": {
+      "commandName": "Project",
+      "commandLineArgs": "/home/steven/incoming/complete /home/steven/incoming/ready"
+    },
+    "RoseyTest": {
+      "commandName": "Project",
+      "commandLineArgs": "/home/steven/incoming/rosey_test/incoming /home/steven/incoming/rosey_test/ready"
+    }
+  }
+}
