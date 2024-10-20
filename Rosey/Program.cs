@@ -90,7 +90,8 @@ namespace Rosey
             }
             var folderProcessor = new DirectoryProcessor(
                 config.GetSection("Rosey:DirectoriesToDelete").Get<string[]>(), 
-                config.GetSection("Rosey:FilesToDelete").Get<string[]>());
+                config.GetSection("Rosey:FilesToDelete").Get<string[]>(),
+                config.GetSection("Rosey:FilesToNeverDelete").Get<string[]>());
             folderProcessor.Process(dir, false);
         }
 

@@ -5,15 +5,22 @@ using System.Text.RegularExpressions;
 
 namespace Rosey;
 
-public class DirectoryProcessor(string[] directoryRegexToDelete, string[] fileRegexsToDelete)
+public class DirectoryProcessor(string[] directoryRegexToDelete, string[] fileRegexsToDelete, string[] fileRegexsToNeverDelete)
 {
     private readonly string[] _directoryRegexToDelete = directoryRegexToDelete;
     private readonly string[] _fileRegexsToDelete = fileRegexsToDelete;
+    private readonly string[] _fileRegexsToNeverDelete = fileRegexsToNeverDelete;
 
     public bool DoDeleteDirectory(DirectoryInfo dir) => _directoryRegexToDelete.Length != 0 && _directoryRegexToDelete.Any(dirRegexToDelete => Regex.IsMatch(dir.Name, dirRegexToDelete, RegexOptions.IgnoreCase));
     
-    public bool DoDeleteFile(FileInfo file) => _fileRegexsToDelete.Length != 0 && _fileRegexsToDelete.Any(fileRegexToDelete => Regex.IsMatch(file.Name, fileRegexToDelete, RegexOptions.IgnoreCase));
+    public bool DoDeleteFile(FileInfo file) 
+        => _fileRegexsToDelete.Length != 0 && 
+           _fileRegexsToDelete.Any(fileRegexToDelete => Regex.IsMatch(file.Name, fileRegexToDelete, RegexOptions.IgnoreCase)) && 
+           !NeverDelete(file);
 
+    private bool NeverDelete(FileInfo file)
+        => _fileRegexsToNeverDelete.Length != 0 && 
+           _fileRegexsToNeverDelete.Any(fileRegexToNeverDelete => Regex.IsMatch(file.Name, fileRegexToNeverDelete, RegexOptions.IgnoreCase));
     
     public bool Process(DirectoryInfo directoryToProcess, bool readOnly)
     {
@@ -37,7 +44,7 @@ public class DirectoryProcessor(string[] directoryRegexToDelete, string[] fileRe
             {
                 continue;
             }
-            Console.WriteLine($": - Deleting File [{file.Name}]");
+            Console.WriteLine($": - Deleting File [{file.FullName}]");
             file.Delete();
         }
         DeleteEmptyDirs(directoryToProcess.FullName);
