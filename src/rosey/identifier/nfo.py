@@ -2,8 +2,8 @@
 
 import contextlib
 import logging
-import xml.etree.ElementTree as ET
 from pathlib import Path
+from xml.etree import ElementTree
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +43,7 @@ def parse_nfo(nfo_path: str) -> NFOData | None:
         NFOData if successfully parsed, None otherwise
     """
     try:
-        tree = ET.parse(nfo_path)
+        tree = ElementTree.parse(nfo_path)
         root = tree.getroot()
 
         data = NFOData()
@@ -116,7 +116,7 @@ def parse_nfo(nfo_path: str) -> NFOData | None:
 
         return data
 
-    except ET.ParseError as e:
+    except ElementTree.ParseError as e:
         logger.warning(f"Failed to parse NFO {nfo_path}: {e}")
         return None
     except Exception as e:

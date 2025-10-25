@@ -40,7 +40,7 @@ They map directly to PySide6 widgets (Qt Widgets), but they are toolkit-agnostic
 - Selecting a node in `treeLibrary` filters `tableDetails` to that scope (show/season/movie).
 - The filter buttons (`btnFilter*`) update `tableDetails` to show items of a specific confidence level.
 - `btnClearView` clears the `treeLibrary` and `tableDetails` views, but does not delete any data.
-- Double‑clicking a grid row opens **Detail Dialog** (`dlgDetail`) for that media file.  
+- Double‑clicking a grid row opens **Detail Dialog** (`dlgDetail`) for that media file.
 
 ---
 
@@ -158,4 +158,3 @@ They map directly to PySide6 widgets (Qt Widgets), but they are toolkit-agnostic
 ```
 
 ---
-

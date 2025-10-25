@@ -121,7 +121,7 @@ async def test_search_movie_with_fixture():
     """Test TMDB movie search using recorded fixture."""
     provider = TMDBProvider(api_key="test_key", use_fixtures=True)
     results = await provider.search_movie("The Matrix")
-    
+
     assert len(results) > 0
     assert results[0]["title"] == "The Matrix"
     assert results[0]["id"] == 603
@@ -133,7 +133,7 @@ async def test_search_movie_live():
     api_key = os.getenv("TMDB_API_KEY")
     provider = TMDBProvider(api_key=api_key, use_fixtures=False)
     results = await provider.search_movie("The Matrix")
-    
+
     assert len(results) > 0
 ```
 

@@ -311,7 +311,7 @@ def clean_title(title: str, extracted_year: int | None = None) -> str:
     else:
         # If no year was extracted, remove years in valid range (1900-2040)
         # Use a more specific pattern that won't match title numbers at the start
-        def should_remove_year(match):
+        def should_remove_year(match: re.Match[str]) -> str:
             year_str = match.group(1)
             year = int(year_str)
             # Only remove if it's in the valid movie year range
@@ -392,9 +392,9 @@ def clean_title(title: str, extracted_year: int | None = None) -> str:
         r"\s+french\s+korean",
     ]
 
-    for pattern in compound_patterns:
+    for pat in compound_patterns:
         title_normalized = re.sub(
-            rf"{pattern}\s*$",
+            rf"{pat}\s*$",
             "",
             title_normalized,
             flags=re.IGNORECASE,

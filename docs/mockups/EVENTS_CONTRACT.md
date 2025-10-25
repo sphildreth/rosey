@@ -23,7 +23,7 @@
 - **Grid model** rows expose: `checked` (bool), `type`, `name`, `season`, `episode`, `confidence`, `dest`, `source`, `reasons`.
 
 ## Selection behavior
-- Changing selection in `treeLibrary` updates `tableDetails` filter.  
+- Changing selection in `treeLibrary` updates `tableDetails` filter.
 - Double‑click in `tableDetails` emits `openDetailsRequested(rowKey)`.
 - Confidence filter buttons (All/Green/Yellow/Red) emit `filterChanged({ confidence: 'all|green|yellow|red' })`.
 

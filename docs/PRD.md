@@ -144,7 +144,7 @@ Movies
 │   ├── Best_Movie_Ever (2019).mp4
 │   ├── Best_Movie_Ever (2019).en_us.srt
 └── Movie (2021) [imdbid-tt12801262]
-│   ├── Movie (2021) [imdbid-tt12801262].mp4    
+│   ├── Movie (2021) [imdbid-tt12801262].mp4
 ```
 
 #### References

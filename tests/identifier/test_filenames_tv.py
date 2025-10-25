@@ -13,7 +13,7 @@ def pytest_generate_tests(metafunc):
 
 def _get_reasons(parsed: Any) -> list[str]:
     if hasattr(parsed, "reasons"):
-        r = parsed.reasons  # type: ignore[attr-defined]
+        r = parsed.reasons
         if isinstance(r, list):
             return [str(x) for x in r]
         return [str(r)]

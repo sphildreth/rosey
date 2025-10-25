@@ -11,7 +11,7 @@ This guide translates the PRD into an agent-driven implementation plan. It defin
 
 - [x] [Phase A — Planning & Guardrails](#phase-a)
 - [x] [Phase B — M1: Scan + Identify (offline) + Score + Plan + CLI + Minimal UI](#phase-b)
-- [ ] [Phase C — M2: Move Engine + Conflicts + Sidecars + Logging + Progress/Cancel](#phase-c)
+- [x] [Phase C — M2: Move Engine + Conflicts + Sidecars + Logging + Progress/Cancel](#phase-c)
 - [ ] [Phase D — M3: Online Lookups (TMDB/TVDB) + Cache + Settings UI](#phase-d)
 - [ ] [Phase E — M4: Packaging (Win/Linux) + Icons + Docs + First Binaries](#phase-e)
 - [ ] [Continuous — Tests & Docs + Observability + Perf/Stress + Cross-Platform CI](#continuous)
@@ -250,13 +250,13 @@ class MoveResult(BaseModel):
 <a id="phase-c"></a>
 ### Phase C — M2: Move Engine + Conflicts + Logging + Progress/Cancel
 
-- [ ] Transactional move engine (rename same volume; copy→verify→quarantine→commit across volumes).
-- [ ] Sidecar discovery and co-move.
-- [ ] Conflict dialog (Skip/Replace/Keep Both); suffix “(1)” policy.
-- [ ] Preflight checks: free space, path length, permissions.
-- [ ] Progress UI, cancel, and rollback on failure.
-- [ ] Rotating logs (file) + status pane (redacted).
-- [ ] Property-based tests inject failures; rollback guarantees verified.
+- [x] Transactional move engine (rename same volume; copy→verify→quarantine→commit across volumes).
+- [x] Sidecar discovery and co-move.
+- [x] Conflict dialog (Skip/Replace/Keep Both); suffix “(1)” policy.
+- [x] Preflight checks: free space, path length, permissions.
+- [x] Progress UI, cancel, and rollback on failure.
+- [x] Rotating logs (file) + status pane (redacted).
+- [x] Property-based tests inject failures; rollback guarantees verified.
 
 <a id="phase-d"></a>
 ### Phase D — M3: Online Lookups + Cache + Settings UI

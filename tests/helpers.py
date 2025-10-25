@@ -86,8 +86,8 @@ def normalize_item(item: Any) -> dict[str, Any]:
     # If pydantic model or similar, try .model_dump()/dict()
     if hasattr(item, "model_dump"):
         data = item.model_dump()
-    elif hasattr(item, "dict") and callable(item.dict):  # type: ignore[attr-defined]
-        data = item.dict()  # type: ignore[call-arg]
+    elif hasattr(item, "dict") and callable(item.dict):
+        data = item.dict()
     else:
         data = dict(item)
 
@@ -105,7 +105,7 @@ def normalize_item(item: Any) -> dict[str, Any]:
     return {k: data.get(k) for k in expected_keys}
 
 
-def assert_reason_contains(reasons: Iterable[str], needle: str | None):
+def assert_reason_contains(reasons: Iterable[str], needle: str | None) -> None:
     if not needle:
         return
     hay = " ".join(reasons).lower()
