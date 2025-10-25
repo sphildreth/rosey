@@ -2,6 +2,11 @@
 # Rosey — Product Requirements Document (PRD)
 Version: 1.0 (PySide6) • Date: 2025-10-25
 
+## Related documents
+- Technical Specification: [TECH_SPEC.md](./TECH_SPEC.md)
+- Documentation Index: [README.md](./README.md)
+- UI Mockups: [mockups/UI_MOCKUPS.md](./mockups/UI_MOCKUPS.md)
+
 ## 1) Overview
 Rosey is a cross‑platform desktop utility (Windows + Linux) that scans a **Source** folder (including network shares),
 identifies Movies and TV Shows using **offline signals** (.nfo, filenames, folders) and optional **online metadata lookups**

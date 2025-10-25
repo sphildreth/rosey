@@ -1,44 +1,70 @@
-# Rosey
+<p align="center">
+	<img src="./graphics/logo.png" alt="Rosey logo" width="160" />
+</p>
 
-**Media organizer for Jellyfin** — A cross-platform desktop utility to scan, identify, and organize your movie and TV show files into Jellyfin-friendly folders.
+<h1 align="center">Rosey</h1>
+
+<p align="center"><b>Media organizer for Jellyfin</b> — Scan, identify, and safely organize Movies and TV Shows into Jellyfin‑friendly folders.</p>
+
+<p align="center">
+	<a href="https://img.shields.io/badge/status-design%20phase-blue"><img alt="Project status" src="https://img.shields.io/badge/status-design%20phase-blue"></a>
+	<a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-green"></a>
+	<img alt="Platforms" src="https://img.shields.io/badge/platforms-Windows%20%26%20Linux-8A2BE2">
+	<img alt="GUI" src="https://img.shields.io/badge/GUI-PySide6-41b883">
+</p>
+
+<p align="center">
+	<a href="#features">Features</a> •
+	<a href="#roadmap">Roadmap</a> •
+	<a href="#documentation">Documentation</a> •
+	<a href="#contributing">Contributing</a> •
+	<a href="#license">License</a>
+</p>
+
+---
+
+Rosey is a cross‑platform desktop utility (Windows + Linux) that scans a Source folder (including network shares), identifies Movies and TV Shows using offline signals and optional online metadata lookups (TMDB/TVDB), then moves selected items into clean, Jellyfin‑ready folders. Privacy‑first: no telemetry; provider calls only when enabled.
 
 ## Features
 
-- **Offline & Online Identification**: Detects media from filenames, folders, and .nfo files; optional TMDB/TVDB lookups for better accuracy.
-- **Confidence Scoring**: Green/Yellow/Red ratings with tooltips explaining matches.
-- **Safe Batch Moves**: Atomic renames or cross-volume copies with rollback on errors; handles sidecar files (.srt, .nfo, etc.).
-- **Responsive UI**: PySide6-based interface with light/dark themes, tree/grid views, and progress tracking.
-- **Privacy-First**: No telemetry; API keys stored securely; works offline.
+- Offline identification from filenames, folders, and .nfo files
+- Optional online metadata: TMDB primary, TVDB optional (with caching and rate limiting)
+- Confidence scoring with reasons (Green ≥70, Yellow 40–69, Red <40)
+- Safe batch moves with rollback; atomic rename on same volume, copy‑verify across volumes
+- Sidecar handling: .srt, .nfo, artwork moved with their media
+- Responsive PySide6 UI with light/dark theme; tree + grid views; progress updates
+- Configurable Jellyfin naming conventions for Movies and Shows
+- Clear, rotating logs; dry‑run preview mode
 
-## Installation
+## Roadmap
 
-### Prerequisites
-- Python 3.11+
-- PySide6, httpx, pydantic, keyring, and other dependencies (see `requirements.txt`).
+Milestones (from the PRD):
 
-### From Source
-1. Clone the repo: `git clone https://github.com/sphildreth/rosey.git`
-2. Install dependencies: `pip install -r requirements.txt`
-3. Run: `python src/app.py`
+- M1: Scanner + offline Identify + Score + Plan + UI table (no moves)
+- M2: Mover + conflict handling + logging + progress/cancel
+- M3: Online lookups + cache + settings UI
+- M4: Packaging, icons, docs, first binary
 
-### Binaries (Coming Soon)
-Download from releases for Windows/Linux.
+## Documentation
 
-## Usage
+- Docs Index: [docs/README.md](./docs/README.md)
+- Product Requirements: [docs/PRD.md](./docs/PRD.md)
+- Technical Specification: [docs/TECH_SPEC.md](./docs/TECH_SPEC.md)
+- UI Mockups: [docs/mockups/UI_MOCKUPS.md](./docs/mockups/UI_MOCKUPS.md)
 
-1. Set source folder, movie/TV targets in config.
-2. Click **Scan** to identify files.
-3. Review and select items (auto-select Green).
-4. Click **Move Selected** to organize.
+## Status
 
-See [PRD](./docs/PRD.md) for details and [TECH_SPEC](./docs/TECH_SPEC.md) for architecture.
+This repository currently focuses on specifications and design. Implementation details and architecture decisions live in the Tech Spec. Binaries and build instructions will be added once development begins.
 
 ## Contributing
 
-- Follow the [TECH_SPEC](./docs/TECH_SPEC.md) for code structure.
-- Run tests: `pytest`
-- Report issues or PRs welcome.
+Contributions are welcome! A few tips to get started:
+
+- Read the [PRD](./docs/PRD.md) to understand goals and scope
+- Review the [Technical Spec](./docs/TECH_SPEC.md) for design and component boundaries
+- Discuss larger changes in an issue before opening a PR
+- Keep docs updated when behavior or decisions change
 
 ## License
 
-See [LICENSE](./LICENSE).
+MIT — see [LICENSE](./LICENSE).
