@@ -1,6 +1,6 @@
 
 # Rosey — Product Requirements Document (PRD)
-Version: 1.0 (PySide6) • Date: 2025-10-25
+Version: 1.0 • Date: 2025-10-25
 
 ## Related documents
 - Technical Specification: [TECH_SPEC.md](./TECH_SPEC.md)
