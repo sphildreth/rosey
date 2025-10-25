@@ -1,0 +1,7 @@
+source_path,kind,title,year,season,episodes,part,date,reason_contains
+"Show.Name.S01E02.mkv",episode,Show Name,,1,2,,,"matched filename pattern"
+"Show.Name.S01E01-E02.mkv",episode,Show Name,,1,"1|2",,,"multi-episode range"
+"Show.Name.S02E03 Part 2.mkv",episode,Show Name,,2,3,2,,"multipart"
+"Series Name A (2010)/Season 00/Series Name A S00E01.mkv",episode,Series Name A,2010,0,1,,,"season specials"
+"Series.Name.1x02.1080p.mkv",episode,Series Name,,1,2,,,"matched filename pattern"
+"Series Name - 2018-03-10.mkv",episode,Series Name,,, , ,2018-03-10,"date-based episode"

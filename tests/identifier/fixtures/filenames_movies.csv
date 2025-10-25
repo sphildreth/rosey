@@ -1,0 +1,5 @@
+source_path,kind,title,year,season,episodes,part,date,reason_contains
+"Best_Movie_Ever (2019).mp4",movie,Best Movie Ever,2019,,,,,"title (year)"
+"Movie.2021.1080p.mkv",movie,Movie,2021,,,,,"year token"
+"Movie (2021) [imdbid-tt12801262].mp4",movie,Movie,2021,,,,,"external id present"
+"Something (Director's Cut) (2010).mkv",movie,"Something (Director's Cut)",2010,,,,,"parentheses in title"

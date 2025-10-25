@@ -72,6 +72,8 @@ Privacy‑first: no telemetry; provider calls only when enabled.
   - Specials: use `Season 00`.
 - **FR‑6 Present:** show candidates; allow selection helpers; filter and sort.
   - AC: Confidence filter buttons (All/Green/Yellow/Red) modify the grid; Unknown items are visible but excluded from plan by default.
+- **FR‑6.1 Present – Context Menu (Discover, opt‑in):** Right‑click on Library Tree nodes (Shows/Movies/Show/Season) offers a Discover action that triggers online metadata lookups when providers are enabled.
+  - AC: Runs in a background thread; respects rate limits and cache (FR‑3); shows non‑blocking status/progress; failures degrade gracefully (logged, user notified); does not perform any destructive operation. When providers are disabled, Discover is disabled or shows an explanatory tooltip.
 - **FR‑7 Move:** execute file operations with robust error handling and progress updates. On same volume, use atomic renames. Across volumes, use a safe copy-verify-quarantine process (copy, verify size, then move original to a temporary folder). Moves should be transactional; if any part of a multi-file operation fails, the system will attempt to roll back any changes made in that operation to leave the destination clean.
 - **FR-7.1 Move Sidecar Files:** When a media file is moved, all associated sidecar files (e.g., `.srt`, `.nfo`, `.jpg`) sharing the same base filename are also moved.
   - Preflight checks: verify free space on destination (≥ size of files to copy + small buffer), check path length and permissions; surface actionable errors.
@@ -100,6 +102,7 @@ Privacy‑first: no telemetry; provider calls only when enabled.
 - **M1:** Scanner + offline Identify + Score + Plan + UI table (no moves).
 - **M2:** Mover + conflict handling + logging + progress/cancel.
 - **M3:** Online lookups + cache + settings UI.
+  - Add Library Tree context menu: Discover (provider lookups) when enabled.
 - **M4:** Packaging, icons, docs, first binary.
 
 ### Appendices

@@ -103,11 +103,11 @@ If the code fails to run or tests fail, I will paste errors; respond with the sm
 - Online Providers Agent
   - Inputs: API keys, cache, language/region.
   - Outputs: TMDB/TVDB metadata with caching and rate limiting.
-  - DoD: Recorded-fixture tests; offline graceful degradation; errors logged.
+  - DoD: Recorded-fixture tests; offline graceful degradation; errors logged. Exposes a "Discover" trigger for UI actions and responds with cached/budgeted lookups.
 
 - PySide6 UI Agent
   - Inputs: core library API.
-  - Outputs: single-window app with tree (left) + grid (right), theme toggle, filters, selection helpers; conflict dialog; progress.
+  - Outputs: single-window app with tree (left) + grid (right), theme toggle, filters, selection helpers; conflict dialog; progress; context menu on Library Tree with a Discover action (M3).
   - DoD: Long-running work in threads; UI responsive during scan/move.
 
 - Config & Logging Agent
@@ -216,6 +216,7 @@ class MoveResult(BaseModel):
   - [ ] Sidecar co-move; conflict suffix “(1)” for Keep Both.
 - Online Providers
   - [ ] Cache hit/miss; budgeted calls; graceful offline behavior with clear logs.
+  - [ ] UI Discover action triggers provider lookups when enabled; disabled/offline state handled gracefully.
 - UI
   - [ ] Filters and selection helpers work; progress updates; responsiveness during long ops.
 
@@ -264,6 +265,7 @@ class MoveResult(BaseModel):
 - [ ] Disk-backed cache and rate limiting with backoff.
 - [ ] Settings UI for API keys, cache TTL, concurrency, language/region, dry-run.
 - [ ] Recorded-fixture tests; live calls opt-in with budget; graceful degradation.
+- [ ] Library Tree context menu: Discover action — runs in background thread; respects rate limit/cache; shows non-blocking status; disabled when providers are off; errors logged.
 
 <a id="phase-e"></a>
 ### Phase E — M4: Packaging + Icons + Docs + Binaries
