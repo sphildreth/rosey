@@ -78,7 +78,11 @@ def extract_episode_info(filename: str) -> EpisodeMatch | None:
             # Check for episode range
             ep2_str = match.groupdict().get("ep2")
             if ep2_str:
-                episodes.append(int(ep2_str))
+                ep2 = int(ep2_str)
+                if ep2 > ep1:
+                    episodes = list(range(ep1, ep2 + 1))
+                else:
+                    episodes.append(ep2)
 
             return EpisodeMatch(season=season, episodes=episodes)
 
