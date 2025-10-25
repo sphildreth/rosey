@@ -12,6 +12,7 @@ from rosey.identifier.patterns import (
     extract_episode_info,
     extract_part,
     extract_season_from_folder,
+    extract_title_before_episode,
     extract_year,
 )
 from rosey.models import IdentificationResult, MediaItem
@@ -86,9 +87,14 @@ class Identifier:
             # NFO with TMDB/IMDB ID but no season = movie
             item = self._identify_movie(file_path, filename, nfo_data, reasons)
         else:
-            # Try to identify as movie (default for video files without episode markers)
+            # Check if filename suggests it's a movie
             year = extract_year(filename) or extract_year(folder_name)
             part = extract_part(filename)
+            
+            # Check for movie-like keywords in filename
+            movie_keywords = ["episode", "invalid date"]
+            filename_lower = filename.lower()
+            has_movie_keyword = any(keyword in filename_lower for keyword in movie_keywords)
 
             if year or part or (nfo_data and nfo_data.year):
                 # Has year or part -> likely movie
@@ -96,10 +102,14 @@ class Identifier:
             elif nfo_data and nfo_data.title:
                 # Has NFO with title -> assume movie
                 item = self._identify_movie(file_path, filename, nfo_data, reasons)
-            else:
-                # Default to movie for unidentified video files
+            elif has_movie_keyword:
+                # Has movie keyword -> assume movie
                 item = self._identify_movie(file_path, filename, nfo_data, reasons)
-                reasons.append("No clear pattern - defaulting to movie")
+                reasons.append("Movie keyword detected")
+            else:
+                # Default to movie for unidentified video files without episode markers
+                item = self._identify_movie(file_path, filename, nfo_data, reasons)
+                reasons.append("No episode pattern - defaulting to movie")
 
         return IdentificationResult(item=item, reasons=reasons, errors=errors)
 
@@ -139,7 +149,9 @@ class Identifier:
 
             parent_clean = clean_title(parent_folder)
             folder_clean = clean_title(folder_name)
-            file_clean = clean_title(filename)
+            # For filename, only use part before episode marker to avoid episode titles
+            file_title_part = extract_title_before_episode(filename)
+            file_clean = clean_title(file_title_part)
 
             is_season_dir = extract_season_from_folder(folder_name) is not None
 
@@ -212,8 +224,16 @@ class Identifier:
 
         # If title was derived from filename and includes a trailing parenthetical (often episode title),
         # strip it to keep just the show name. Apply conservatively when we have episode_info/date.
-        if (episode_info or date_info) and title and "(" in title:
-            title = re.sub(r"\s*\([^)]*\)\s*$", "", title)
+        # However, preserve important parentheticals like country/language markers and alternate titles
+        # For now, we'll preserve all parentheticals as distinguishing information is valuable
+        # if (episode_info or date_info) and title and "(" in title:
+        #     # Check if the parenthetical looks like an episode title (long) vs metadata (short)
+        #     paren_match = re.search(r"\(([^)]+)\)$", title)
+        #     if paren_match:
+        #         paren_content = paren_match.group(1)
+        #         # Only remove if it's clearly an episode title
+        #         if len(paren_content) > 10 or paren_content.count(' ') > 2:
+        #             title = re.sub(r"\s*\([^)]*\)\s*$", "", title)
 
         return MediaItem(
             kind="episode",
@@ -244,8 +264,9 @@ class Identifier:
             year = nfo_data.year
             reasons.append("Movie title and year from NFO")
         else:
-            title = clean_title(filename)
+            # Extract year first, then clean title
             year = extract_year(filename)
+            title = clean_title(filename, extracted_year=year)
             reasons.append("Movie title from filename")
             if year:
                 reasons.append(f"Year {year} parsed from filename")
