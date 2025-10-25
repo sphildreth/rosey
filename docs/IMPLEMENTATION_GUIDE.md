@@ -2,6 +2,11 @@
 
 This guide translates the PRD into an agent-driven implementation plan. It defines phases with clear acceptance criteria, agent roles, guardrails, data contracts, testing, and quality gates. No timeframes are included.
 
+> For coding agents (Copilot/Claude):
+> See **docs/AI_AGENT_PLAYBOOK.md** for exact prompts, response format (unified diffs only),
+> and step-by-step tasks (shell → tree filtering → scan threading → config dialog → detail dialog → mover).
+
+
 ## Phase Map
 
 - [ ] [Phase A — Planning & Guardrails](#phase-a)
@@ -19,7 +24,15 @@ Task: Implement only the unchecked items in Phase {PHASE_NAME} (see IMPLEMENTATI
 Scope: Modify only src/rosey/**, tests/**, docs/**, and packaging configs; keep the diff small and self-contained.
 Requirements: Add/update tests so the phase’s acceptance criteria pass; UI work must stay responsive (threads); online provider calls are opt-in and use recorded fixtures by default; dry-run is the default for move operations.
 Quality gates: pytest all green, ruff clean, mypy clean, UI smoke run OK.
+Project: Rosey (PySide6, Qt Widgets, QSS). See docs/PRD.md, docs/TECH_SPEC.md, docs/mockups/.
+Run: python -m rosey.app
+Tests: pytest -q
+Lint: ruff check . ; Format: black .
 Output: Code + tests + a brief summary of changes and how you verified them (commands and results). If blocked, state the minimal decision needed to proceed.
+
+Follow AI_AGENT_PLAYBOOK.md. Return unified diffs only. Modify only the files I name.
+If the code fails to run or tests fail, I will paste errors; respond with the smallest possible fix diff.
+
 ```
 
 ---

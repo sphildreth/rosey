@@ -48,6 +48,9 @@ This repository currently focuses on specifications and design. Implementation d
 
 ## Contributing
 
+**Using AI coding agents?** Start with **docs/AI_AGENT_PLAYBOOK.md**.
+It constrains scope, requires unified diffs, and defines pass/fail per step so patches actually run.
+
 Contributions are welcome! A few tips to get started:
 
 - Read the [PRD](./docs/PRD.md) to understand goals and scope
