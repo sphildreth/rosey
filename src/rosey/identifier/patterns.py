@@ -48,11 +48,16 @@ DATE_PATTERN = re.compile(
 
 # Year pattern for movies (1999, 2020, etc.)
 # Try parenthesized year first, then standalone year with flexible boundaries
-YEAR_PATTERN = re.compile(r"\((?P<year>\d{4})\)|(?:^|[._\s\-])(?P<year2>19\d{2}|20\d{2})(?=[._\s\-]|$)")
+YEAR_PATTERN = re.compile(
+    r"\((?P<year>\d{4})\)|(?:^|[._\s\-])(?P<year2>19\d{2}|20\d{2})(?=[._\s\-]|$)"
+)
 
 # Part pattern (Part 1, Part 2, pt1, etc., including Roman numerals like Part III and spelled out numbers)
 # Use word boundary at start to avoid matching within words like "caption"
-PART_PATTERN = re.compile(r"\b[Pp](?:ar)?t[.\s]*(?P<part>\d+|(?:[IVX]+|One|Two|Three|Four|Five|Six|Seven|Eight|Nine|Ten)\b)", re.IGNORECASE)
+PART_PATTERN = re.compile(
+    r"\b[Pp](?:ar)?t[.\s]*(?P<part>\d+|(?:[IVX]+|One|Two|Three|Four|Five|Six|Seven|Eight|Nine|Ten)\b)",
+    re.IGNORECASE,
+)
 
 # Season folder pattern (matches "Season 01", "Season 1", or "S03")
 SEASON_FOLDER_PATTERN = re.compile(
@@ -61,16 +66,15 @@ SEASON_FOLDER_PATTERN = re.compile(
 )
 
 
-
 def extract_title_before_episode(filename: str) -> str:
     """
     Extract title from filename, taking only the part before episode markers.
-    
+
     This helps avoid including episode titles in the show title.
-    
+
     Args:
         filename: Filename to parse
-    
+
     Returns:
         Title portion before episode marker
     """
@@ -79,13 +83,13 @@ def extract_title_before_episode(filename: str) -> str:
         match = pattern.search(filename)
         if match:
             # Return everything before the episode marker
-            return filename[:match.start()]
-    
+            return filename[: match.start()]
+
     # If no episode pattern, check for date pattern
     match = DATE_PATTERN.search(filename)
     if match:
-        return filename[:match.start()]
-    
+        return filename[: match.start()]
+
     # No pattern found, return full filename
     return filename
 
@@ -159,7 +163,7 @@ def extract_year(filename: str) -> int | None:
         # Validate year range (1900-2040 seems reasonable for movies)
         if 1900 <= year <= 2040:
             return year
-    
+
     # Then try standalone year with flexible boundaries
     standalone_pattern = re.compile(r"(?:^|[._\s\-])(?P<year>19\d{2}|20\d{2})(?=[._\s\-]|$)")
     match = standalone_pattern.search(filename)
@@ -190,12 +194,20 @@ def extract_part(filename: str) -> int | None:
             return int(part_str)
         except ValueError:
             # Try Roman numeral
-            if part_str.upper() in ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X']:
+            if part_str.upper() in ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"]:
                 return roman_to_int(part_str.upper())
             # Try spelled-out number
             word_to_num = {
-                'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5,
-                'six': 6, 'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10
+                "one": 1,
+                "two": 2,
+                "three": 3,
+                "four": 4,
+                "five": 5,
+                "six": 6,
+                "seven": 7,
+                "eight": 8,
+                "nine": 9,
+                "ten": 10,
             }
             return word_to_num.get(part_str.lower())
 
@@ -204,7 +216,7 @@ def extract_part(filename: str) -> int | None:
 
 def roman_to_int(s: str) -> int:
     """Convert Roman numeral to integer."""
-    roman_values = {'I': 1, 'V': 5, 'X': 10, 'L': 50, 'C': 100, 'D': 500, 'M': 1000}
+    roman_values = {"I": 1, "V": 5, "X": 10, "L": 50, "C": 100, "D": 500, "M": 1000}
     total = 0
     prev_value = 0
     for char in reversed(s):
@@ -256,7 +268,7 @@ def clean_title(title: str, extracted_year: int | None = None) -> str:
         vol_matches.append((match.group(0), f"VOLPLACEHOLDER{match.group(2)}ENDVOL"))
     for orig, placeholder in vol_matches:
         title = title.replace(orig, placeholder)
-    
+
     # Remove episode patterns first, but save parenthetical info (like show origin/country)
     # Extract and preserve parenthetical info that's not a year
     preserved_parens = []
@@ -266,7 +278,7 @@ def clean_title(title: str, extracted_year: int | None = None) -> str:
         # Only preserve if it's not a year and not empty
         if not re.match(r"^\d{4}$", content) and content.strip():
             preserved_parens.append(f"({content})")
-    
+
     # Remove episode patterns
     for pattern in EPISODE_PATTERNS:
         title = pattern.sub("", title)
@@ -280,7 +292,7 @@ def clean_title(title: str, extracted_year: int | None = None) -> str:
     # Remove common separators and clean up (convert to spaces) - do this early
     # Convert dots, underscores, and hyphens to spaces
     title = re.sub(r"[._\-]+", " ", title)
-    
+
     # Now remove standalone year (but only after converting separators to spaces)
     # Only remove the extracted year, not other year-like numbers that might be part of the title
     if extracted_year:
@@ -304,16 +316,21 @@ def clean_title(title: str, extracted_year: int | None = None) -> str:
             year = int(year_str)
             # Only remove if it's in the valid movie year range
             return "" if 1900 <= year <= 2040 else match.group(0)
-        
+
         title = re.sub(r"\s+(19\d{2}|20\d{2})(?=\s|$)", should_remove_year, title)
 
     # Remove part indicators (but not "Part" that's in the middle of titles)
     # Remove when followed by a number, Roman numeral, or spelled out number (One, Two, etc.)
-    title = re.sub(r"\b[Pp](?:ar)?t[.\s]*(?:\d+|[IVX]+|One|Two|Three|Four|Five|Six|Seven|Eight|Nine|Ten)\b", "", title, flags=re.IGNORECASE)
+    title = re.sub(
+        r"\b[Pp](?:ar)?t[.\s]*(?:\d+|[IVX]+|One|Two|Three|Four|Five|Six|Seven|Eight|Nine|Ten)\b",
+        "",
+        title,
+        flags=re.IGNORECASE,
+    )
 
     # Remove quality indicators (1080p, 720p, 2160p, 480p, etc.)
     title = re.sub(r"\b\d{3,4}[pi]\b", "", title, flags=re.IGNORECASE)
-    
+
     # Remove format indicators (3D, IMAX, 70mm, etc.)
     title = re.sub(r"\b(3d|imax|\d+mm)\b", "", title, flags=re.IGNORECASE)
 
@@ -357,12 +374,12 @@ def clean_title(title: str, extracted_year: int | None = None) -> str:
     )
     # Remove standalone "edition" that's left over
     title = re.sub(r"\bedition\b", "", title, flags=re.IGNORECASE)
-    
+
     # Remove common language/country descriptors and platform names
     # Only remove at the start or end of the title to avoid removing words that are part of the title itself
     # First normalize spaces so we can reliably detect start/end positions
     title_normalized = re.sub(r"\s+", " ", title).strip()
-    
+
     # Handle multi-word patterns first (from the end)
     # These need to be checked before single words
     compound_patterns = [
@@ -374,7 +391,7 @@ def clean_title(title: str, extracted_year: int | None = None) -> str:
         r"\s+hulu\s+original",
         r"\s+french\s+korean",
     ]
-    
+
     for pattern in compound_patterns:
         title_normalized = re.sub(
             rf"{pattern}\s*$",
@@ -382,10 +399,10 @@ def clean_title(title: str, extracted_year: int | None = None) -> str:
             title_normalized,
             flags=re.IGNORECASE,
         )
-    
+
     # Pattern that matches single words at the start or end (after normalization)
     descriptors_pattern = r"(korean|japanese|chinese|french|spanish|german|italian|russian|polish|persian|irish|belgian|british|telugu|netflix|hulu|original|roku|disney|plus|paramount|animated|criterion|hdr|amzn)"
-    
+
     # Remove from the end (single words) - iterate until no more matches
     while True:
         new_title = re.sub(
@@ -397,7 +414,7 @@ def clean_title(title: str, extracted_year: int | None = None) -> str:
         if new_title == title_normalized:
             break
         title_normalized = new_title
-    
+
     # Remove from the start (single words) - iterate until no more matches
     while True:
         new_title = re.sub(
@@ -409,9 +426,9 @@ def clean_title(title: str, extracted_year: int | None = None) -> str:
         if new_title == title_normalized:
             break
         title_normalized = new_title
-    
+
     title = title_normalized
-    
+
     # Remove director/actor name descriptors (common ones that appear as tags)
     # These are multi-word names that typically appear after year/quality metadata
     title = re.sub(
@@ -420,12 +437,12 @@ def clean_title(title: str, extracted_year: int | None = None) -> str:
         title,
         flags=re.IGNORECASE,
     )
-    
+
     # Remove director/actor names and descriptive words that appear as single words
     # (These are harder to detect reliably, but we can catch common patterns)
     # Remove phrases like "Michael Bay", "Baz Luhrmann", "David O Russell", "Idris Elba", "BJ Novak"
     # This is tricky - we'll handle the most common by removing capitalized words after we've stripped metadata
-    
+
     # Remove "Black and Chrome", "Romantic Comedy" type descriptors (full phrases)
     title = re.sub(
         r"\b(black\s+and\s+chrome|romantic\s+comedy|unrated)\b",
@@ -455,7 +472,11 @@ def clean_title(title: str, extracted_year: int | None = None) -> str:
     # Remove specific known release group names (all caps abbreviations)
     # Common ones: GROUP, KOGi, AVS, GGEZ, BAE, RBB, NTb, etc.
     # Be conservative - only remove if all caps or specific mixed case patterns
-    title = re.sub(r"\b(GROUP|KOGI|AVS|GGEZ|BAE|RBB|NTB|RARBG|ION10|MEMENTO|KILLERS|ROVERS|SPARKS|FLUX)\b", "", title)
+    title = re.sub(
+        r"\b(GROUP|KOGI|AVS|GGEZ|BAE|RBB|NTB|RARBG|ION10|MEMENTO|KILLERS|ROVERS|SPARKS|FLUX)\b",
+        "",
+        title,
+    )
     # Mixed case release groups (common patterns)
     title = re.sub(r"\b(KOGi|NTb|RBB)\b", "", title)
 
@@ -477,14 +498,15 @@ def clean_title(title: str, extracted_year: int | None = None) -> str:
     title = re.sub(r"\s+", " ", title).strip()
 
     # Restore Vol patterns
-    for orig, placeholder in vol_matches:
+    for _, placeholder in vol_matches:
         # Extract the number from placeholder
         import re as re_inner
+
         vol_num_match = re_inner.search(r"VOLPLACEHOLDER(\d+)ENDVOL", placeholder)
         if vol_num_match:
             vol_num = vol_num_match.group(1)
             title = title.replace(placeholder, f"Vol {vol_num}")
-    
+
     # Restore common hyphenated compound words
     # These are known patterns where the hyphen is part of the title
     title = re.sub(r"\bSpider Man\b", "Spider-Man", title, flags=re.IGNORECASE)

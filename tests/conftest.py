@@ -25,7 +25,9 @@ def import_or_skip_parser():
     if callable(identify_file):
         # Adapt to expected callable signature returning an item-like object
         return lambda p: identify_file(p).item
-    pytest.skip("No parser function found in rosey.identifier (expected one of parse_path/parse_media/parse_filename or identify_file)")
+    pytest.skip(
+        "No parser function found in rosey.identifier (expected one of parse_path/parse_media/parse_filename or identify_file)"
+    )
 
 
 def import_or_skip_planner():
@@ -35,7 +37,9 @@ def import_or_skip_planner():
         fn = getattr(mod, fname, None)
         if callable(fn):
             return fn
-    pytest.skip("No planner function found in rosey.planner (expected one of plan_destination/build_paths/plan_paths)")
+    pytest.skip(
+        "No planner function found in rosey.planner (expected one of plan_destination/build_paths/plan_paths)"
+    )
 
 
 def load_csv_fixture(path: Path) -> list[dict[str, Any]]:

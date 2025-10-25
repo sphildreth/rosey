@@ -1,6 +1,5 @@
 """Tests for identifier patterns."""
 
-
 from rosey.identifier.patterns import (
     clean_title,
     extract_date,

@@ -64,11 +64,13 @@ class ScanWorker(QRunnable):
                     tv_root="/media/tv",
                 )
 
-                items.append({
-                    "item": ident_result.item,
-                    "score": score,
-                    "destination": destination,
-                })
+                items.append(
+                    {
+                        "item": ident_result.item,
+                        "score": score,
+                        "destination": destination,
+                    }
+                )
 
             self.signals.finished.emit(items)
         except Exception as e:
@@ -149,9 +151,7 @@ class MainWindow(QMainWindow):
         # Table widget (right)
         self.table = QTableWidget()
         self.table.setColumnCount(5)
-        self.table.setHorizontalHeaderLabels(
-            ["✓", "Type", "Name", "Confidence", "Destination"]
-        )
+        self.table.setHorizontalHeaderLabels(["✓", "Type", "Name", "Confidence", "Destination"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
 
@@ -340,7 +340,14 @@ class MainWindow(QMainWindow):
                     confidence = int(conf_text)
 
                     hide = False
-                    if filter_type == "green" and confidence < 70 or filter_type == "yellow" and not (40 <= confidence < 70) or filter_type == "red" and confidence >= 40:
+                    if (
+                        filter_type == "green"
+                        and confidence < 70
+                        or filter_type == "yellow"
+                        and not (40 <= confidence < 70)
+                        or filter_type == "red"
+                        and confidence >= 40
+                    ):
                         hide = True
 
                     self.table.setRowHidden(row, hide)
@@ -364,7 +371,14 @@ class MainWindow(QMainWindow):
                 item_type = type_item.text()
 
                 hide = False
-                if item_text == "Movies" and item_type != "MOVIE" or item_text == "TV Shows" and item_type != "EPISODE" or item_text == "Unknown" and item_type != "UNKNOWN":
+                if (
+                    item_text == "Movies"
+                    and item_type != "MOVIE"
+                    or item_text == "TV Shows"
+                    and item_type != "EPISODE"
+                    or item_text == "Unknown"
+                    and item_type != "UNKNOWN"
+                ):
                     hide = True
 
                 self.table.setRowHidden(row, hide)

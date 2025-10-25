@@ -82,16 +82,16 @@ def parse_nfo(nfo_path: str) -> NFOData | None:
 
         # Extract IDs via <uniqueid type="...">VALUE</uniqueid> (Kodi convention)
         try:
-            for uid in root.findall('.//uniqueid'):
-                type_attr = (uid.get('type') or '').lower()
-                val = (uid.text or '').strip()
+            for uid in root.findall(".//uniqueid"):
+                type_attr = (uid.get("type") or "").lower()
+                val = (uid.text or "").strip()
                 if not val:
                     continue
-                if type_attr == 'imdb' and not data.imdb_id:
+                if type_attr == "imdb" and not data.imdb_id:
                     data.imdb_id = normalize_imdb_id(val)
-                elif type_attr == 'tmdb' and not data.tmdb_id:
+                elif type_attr == "tmdb" and not data.tmdb_id:
                     data.tmdb_id = val
-                elif type_attr == 'tvdb' and not data.tvdb_id:
+                elif type_attr == "tvdb" and not data.tvdb_id:
                     data.tvdb_id = val
         except Exception:
             # Be resilient to odd XML structures

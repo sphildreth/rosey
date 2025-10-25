@@ -1,7 +1,6 @@
 """Media identification from filenames and NFO files."""
 
 import logging
-import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -81,7 +80,14 @@ class Identifier:
         if episode_info or date_info or (nfo_data and nfo_data.season is not None):
             # This is a TV episode
             item = self._identify_episode(
-                file_path, filename, folder_name, parent_folder, episode_info, date_info, nfo_data, reasons
+                file_path,
+                filename,
+                folder_name,
+                parent_folder,
+                episode_info,
+                date_info,
+                nfo_data,
+                reasons,
             )
         elif nfo_data and (nfo_data.tmdb_id or nfo_data.imdb_id) and not nfo_data.season:
             # NFO with TMDB/IMDB ID but no season = movie
@@ -90,7 +96,7 @@ class Identifier:
             # Check if filename suggests it's a movie
             year = extract_year(filename) or extract_year(folder_name)
             part = extract_part(filename)
-            
+
             # Check for movie-like keywords in filename
             movie_keywords = ["episode", "invalid date"]
             filename_lower = filename.lower()

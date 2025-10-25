@@ -147,11 +147,13 @@ def main() -> int:
             tv_root=tv_target,
         )
 
-        results.append({
-            "item": ident_result.item,
-            "score": score_result,
-            "destination": destination,
-        })
+        results.append(
+            {
+                "item": ident_result.item,
+                "score": score_result,
+                "destination": destination,
+            }
+        )
 
     # Display results
     logger.info(f"\nResults: {len(results)} items")

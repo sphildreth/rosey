@@ -66,7 +66,9 @@ class Scanner:
 
         # Process paths concurrently
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            future_to_path = {executor.submit(self._scan_path, path): path for path in paths_to_scan}
+            future_to_path = {
+                executor.submit(self._scan_path, path): path for path in paths_to_scan
+            }
 
             for future in as_completed(future_to_path):
                 try:

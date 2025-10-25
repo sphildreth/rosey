@@ -5,7 +5,6 @@ Filename parsing coverage has been consolidated into CSV-driven tests
 under tests/identifier/.
 """
 
-
 import pytest
 
 from rosey.identifier import identify_file
@@ -16,18 +15,21 @@ def temp_nfo_dir(tmp_path):
     """Create temporary directory with NFO files."""
     # Movie NFO
     movie_nfo = tmp_path / "Movie.nfo"
-    movie_nfo.write_text("""<?xml version="1.0" encoding="UTF-8"?>
+    movie_nfo.write_text(
+        """<?xml version="1.0" encoding="UTF-8"?>
 <movie>
     <title>The Matrix</title>
     <year>1999</year>
     <tmdbid>603</tmdbid>
     <imdbid>tt0133093</imdbid>
 </movie>
-""")
+"""
+    )
 
     # TV episode NFO
     episode_nfo = tmp_path / "Episode.nfo"
-    episode_nfo.write_text("""<?xml version="1.0" encoding="UTF-8"?>
+    episode_nfo.write_text(
+        """<?xml version="1.0" encoding="UTF-8"?>
 <episodedetails>
     <title>The Office</title>
     <season>2</season>
@@ -35,7 +37,8 @@ def temp_nfo_dir(tmp_path):
     <episodetitle>The Dundies</episodetitle>
     <tvdbid>73244</tvdbid>
 </episodedetails>
-""")
+"""
+    )
 
     return tmp_path
 

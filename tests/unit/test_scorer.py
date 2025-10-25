@@ -1,6 +1,5 @@
 """Tests for scorer module."""
 
-
 from rosey.identifier import identify_file
 from rosey.models import IdentificationResult, MediaItem
 from rosey.scorer import Scorer, score_identification

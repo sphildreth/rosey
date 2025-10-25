@@ -1,6 +1,5 @@
 """Tests for planner module."""
 
-
 from rosey.models import MediaItem
 from rosey.planner import Planner, plan_path, sanitize_name
 

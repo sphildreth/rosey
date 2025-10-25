@@ -83,7 +83,9 @@ class Scorer:
         if item.kind == "episode":
             if item.season is not None and item.episodes:
                 confidence += 20
-                reasons.append(f"Season/episode identified: S{item.season:02d}E{item.episodes[0]:02d}")
+                reasons.append(
+                    f"Season/episode identified: S{item.season:02d}E{item.episodes[0]:02d}"
+                )
             elif item.date:
                 confidence += 15
                 reasons.append(f"Date episode identified: {item.date}")
