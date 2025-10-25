@@ -33,17 +33,8 @@ Rosey is a cross‑platform desktop utility (Windows + Linux) that scans a Sourc
 - Safe batch moves with rollback; atomic rename on same volume, copy‑verify across volumes
 - Sidecar handling: .srt, .nfo, artwork moved with their media
 - Responsive PySide6 UI with light/dark theme; tree + grid views; progress updates
-- Configurable Jellyfin naming conventions for Movies and Shows
+- Jellyfin naming conventions for Movies and Shows
 - Clear, rotating logs; dry‑run preview mode
-
-## Roadmap
-
-Milestones (from the PRD):
-
-- M1: Scanner + offline Identify + Score + Plan + UI table (no moves)
-- M2: Mover + conflict handling + logging + progress/cancel
-- M3: Online lookups + cache + settings UI
-- M4: Packaging, icons, docs, first binary
 
 ## Documentation
 
