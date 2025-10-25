@@ -205,3 +205,24 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# OS-generated files
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# IDE settings (project-local)
+.vscode/
+.idea/
+.history/
+
+# Project logs and local run artifacts
+logs/
+log/
+
+# Optional: Rosey local cache directories (uncomment if created in repo root)
+# .rosey_cache/
+# .rosey_logs/

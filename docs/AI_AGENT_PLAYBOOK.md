@@ -81,7 +81,6 @@
 - If a control name mismatches, align to IDs in `UI_COMPONENT_IDS.md`.  
 - If UI fails to render rows, verify: public properties, model row/column counts, and view `setModel` calls.
 
-
 ## Done Definition (per step)
 - App runs without exceptions.
 - Feature works with seed data.

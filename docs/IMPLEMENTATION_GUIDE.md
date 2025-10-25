@@ -9,7 +9,7 @@ This guide translates the PRD into an agent-driven implementation plan. It defin
 
 ## Phase Map
 
-- [ ] [Phase A — Planning & Guardrails](#phase-a)
+- [x] [Phase A — Planning & Guardrails](#phase-a)
 - [ ] [Phase B — M1: Scan + Identify (offline) + Score + Plan + CLI + Minimal UI](#phase-b)
 - [ ] [Phase C — M2: Move Engine + Conflicts + Sidecars + Logging + Progress/Cancel](#phase-c)
 - [ ] [Phase D — M3: Online Lookups (TMDB/TVDB) + Cache + Settings UI](#phase-d)
@@ -29,6 +29,13 @@ Run: python -m rosey.app
 Tests: pytest -q
 Lint: ruff check . ; Format: black .
 Output: Code + tests + a brief summary of changes and how you verified them (commands and results). If blocked, state the minimal decision needed to proceed.
+
+After an item’s changes pass all quality gates, update docs/IMPLEMENTATION_GUIDE.md:
+In {PHASE_NAME} section, change that item’s checkbox to [x].
+If every item in {PHASE_NAME} is now checked, also check the corresponding Phase line in the Phase Map at the top.
+Include IMPLEMENTATION_GUIDE.md in your unified diff when you update checkboxes.
+Do not check items that are only partially complete; if partially done, leave as [ ] and mention “partial” in your summary.
+Only mark items completed if you added/changed code and tests that verify the acceptance criteria
 
 Follow AI_AGENT_PLAYBOOK.md. Return unified diffs only. Modify only the files I name.
 If the code fails to run or tests fail, I will paste errors; respond with the smallest possible fix diff.
@@ -219,13 +226,13 @@ class MoveResult(BaseModel):
 <a id="phase-a"></a>
 ### Phase A — Planning & Guardrails
 
-- [ ] Create structured issues from PRD/TECH_SPEC with AC and write-scope.
-- [ ] Establish repo structure: `src/rosey/**`, `tests/**`, `docs/**`.
-- [ ] Add pre-commit: ruff, black, mypy; pytest config with hypothesis.
-- [ ] Configure CI: lint, typecheck, tests, UI smoke, packaging lanes.
-- [ ] Define config schema (`rosey.json`) and logging/redaction policy.
-- [ ] Decide caching backend and recording strategy for provider fixtures.
-- [ ] Document development policies (write-scope, diff size, approval gates).
+- [x] Create structured issues from PRD/TECH_SPEC with AC and write-scope.
+- [x] Establish repo structure: `src/rosey/**`, `tests/**`, `docs/**`.
+- [x] Add pre-commit: ruff, black, mypy; pytest config with hypothesis.
+- [x] Configure CI: lint, typecheck, tests, UI smoke, packaging lanes.
+- [x] Define config schema (`rosey.json`) and logging/redaction policy.
+- [x] Decide caching backend and recording strategy for provider fixtures.
+- [x] Document development policies (write-scope, diff size, approval gates).
 
 <a id="phase-b"></a>
 ### Phase B — M1: Core Library + CLI + Minimal UI
