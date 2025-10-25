@@ -1,4 +1,9 @@
-"""Tests for identifier module."""
+"""Tests for identifier module.
+
+This file now focuses on NFO precedence and unknown/edge cases.
+Filename parsing coverage has been consolidated into CSV-driven tests
+under tests/identifier/.
+"""
 
 
 import pytest
@@ -33,82 +38,6 @@ def temp_nfo_dir(tmp_path):
 """)
 
     return tmp_path
-
-
-class TestIdentifierMovies:
-    """Test movie identification."""
-
-    def test_movie_with_year(self):
-        """Test identifying movie with year in filename."""
-        result = identify_file("/path/to/The Matrix (1999).mkv")
-
-        assert result.item.kind == "movie"
-        assert "Matrix" in result.item.title
-        assert result.item.year == 1999
-
-    def test_movie_without_year(self):
-        """Test identifying movie without year."""
-        result = identify_file("/path/to/Inception.mkv")
-
-        assert result.item.kind == "movie"
-        assert "Inception" in result.item.title
-
-    def test_movie_multipart(self):
-        """Test identifying multipart movie."""
-        result = identify_file("/path/to/Kill Bill Part 1.mkv")
-
-        assert result.item.kind == "movie"
-        assert result.item.part == 1
-        assert "Kill Bill" in result.item.title
-
-
-class TestIdentifierTVEpisodes:
-    """Test TV episode identification."""
-
-    def test_episode_sxxeyy(self):
-        """Test S01E05 format."""
-        result = identify_file("/tv/The Office/Season 02/The.Office.S02E01.mkv")
-
-        assert result.item.kind == "episode"
-        assert result.item.season == 2
-        assert result.item.episodes == [1]
-
-    def test_episode_xformat(self):
-        """Test 1x05 format."""
-        result = identify_file("/tv/Show/1x05.mkv")
-
-        assert result.item.kind == "episode"
-        assert result.item.season == 1
-        assert result.item.episodes == [5]
-
-    def test_episode_multi_episode(self):
-        """Test multi-episode S01E01-E02."""
-        result = identify_file("/tv/Show/S01E01-E02.mkv")
-
-        assert result.item.kind == "episode"
-        assert result.item.season == 1
-        assert result.item.episodes == [1, 2]
-
-    def test_episode_date_based(self):
-        """Test date-based episode."""
-        result = identify_file("/tv/Daily Show/Daily.Show.2020-03-15.mkv")
-
-        assert result.item.kind == "episode"
-        assert result.item.date == "2020-03-15"
-
-    def test_episode_from_folder_structure(self):
-        """Test deriving show name from folder."""
-        result = identify_file("/tv/Breaking Bad/Season 01/episode.S01E01.mkv")
-
-        assert result.item.kind == "episode"
-        assert "Breaking Bad" in result.item.title or "episode" in result.item.title
-
-    def test_episode_multipart(self):
-        """Test multipart episode."""
-        result = identify_file("/tv/Show/Show.S01E01.Part.1.mkv")
-
-        assert result.item.kind == "episode"
-        assert result.item.part == 1
 
 
 class TestIdentifierWithNFO:
@@ -153,13 +82,4 @@ class TestIdentifierUnknown:
     def test_unknown_ambiguous(self):
         """Test ambiguous filename."""
         result = identify_file("/path/to/abc.mkv")
-
         assert result.item is not None
-
-
-def test_identifier_convenience_function():
-    """Test convenience function."""
-    result = identify_file("/path/to/Movie (2020).mkv")
-
-    assert result is not None
-    assert result.item.kind == "movie"

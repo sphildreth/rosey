@@ -1,6 +1,7 @@
 """Media identification from filenames and NFO files."""
 
 import logging
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -120,9 +121,45 @@ class Identifier:
             title = nfo_data.title
             reasons.append("Show title from NFO")
         else:
-            # Try to extract from parent folders
-            title = clean_title(parent_folder or folder_name)
-            reasons.append("Show title from folder structure")
+            # Prefer a sensible folder-derived title; avoid generic roots like 'source'/'tv'
+            generic_dirs = {
+                "source",
+                "sources",
+                "tv",
+                "movies",
+                "movie",
+                "video",
+                "videos",
+                "media",
+                "downloads",
+                "download",
+                "incoming",
+                "complete",
+            }
+
+            parent_clean = clean_title(parent_folder)
+            folder_clean = clean_title(folder_name)
+            file_clean = clean_title(filename)
+
+            is_season_dir = extract_season_from_folder(folder_name) is not None
+
+            # Heuristics:
+            # - If folder is a season directory, use the parent folder (show folder) when it's not generic
+            # - Else prefer folder name if not generic
+            # - Else use parent if not generic
+            # - Else fall back to filename
+            if is_season_dir and parent_clean and parent_folder.lower() not in generic_dirs:
+                title = parent_clean
+                reasons.append("Show title from folder structure")
+            elif folder_clean and folder_name and folder_name.lower() not in generic_dirs:
+                title = folder_clean
+                reasons.append("Show title from folder structure")
+            elif parent_clean and parent_folder and parent_folder.lower() not in generic_dirs:
+                title = parent_clean
+                reasons.append("Show title from folder structure")
+            else:
+                title = file_clean
+                reasons.append("Show title from filename")
 
         # Determine season and episodes
         season = None
@@ -148,6 +185,16 @@ class Identifier:
         if part:
             reasons.append(f"Multipart episode: Part {part}")
 
+        # Infer show year from folder names (show folder preferred), or NFO
+        year = None
+        if nfo_data and nfo_data.year:
+            year = nfo_data.year
+        else:
+            # Prefer a year embedded in the show folder (parent), else season folder
+            year = extract_year(parent_folder) or extract_year(folder_name)
+            if year:
+                reasons.append(f"Year {year} parsed from folder")
+
         # Build NFO dict
         nfo_dict: dict[str, str | None] = {}
         if nfo_data:
@@ -163,10 +210,16 @@ class Identifier:
             if nfo_data.episode_title:
                 nfo_dict["episode_title"] = nfo_data.episode_title
 
+        # If title was derived from filename and includes a trailing parenthetical (often episode title),
+        # strip it to keep just the show name. Apply conservatively when we have episode_info/date.
+        if (episode_info or date_info) and title and "(" in title:
+            title = re.sub(r"\s*\([^)]*\)\s*$", "", title)
+
         return MediaItem(
             kind="episode",
             source_path=file_path,
             title=title,
+            year=year,
             season=season,
             episodes=episodes,
             part=part,

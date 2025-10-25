@@ -28,14 +28,14 @@ class DateMatch(NamedTuple):
 
 # Episode patterns (SxxEyy, 1x02, S01E01-E02, etc.)
 EPISODE_PATTERNS = [
-    # S01E02 or S01E02-E03
+    # S01E02 or S01 E02 (allow separators) and optional range like -E03
     re.compile(
-        r"[Ss](?P<season>\d{1,2})[Ee](?P<ep1>\d{1,3})(?:-?[Ee](?P<ep2>\d{1,3}))?",
+        r"[Ss](?P<season>\d{1,2})[ ._\-]*[Ee](?P<ep1>\d{1,3})(?:[ ._\-]*-?[ ._\-]*[Ee](?P<ep2>\d{1,3}))?",
         re.IGNORECASE,
     ),
-    # 1x02 or 1x02-03
+    # 1x02 or 1x02-03 (require a dash to indicate a range; allow separators around dash)
     re.compile(
-        r"(?P<season>\d{1,2})x(?P<ep1>\d{1,3})(?:-?(?P<ep2>\d{1,3}))?",
+        r"(?P<season>\d{1,2})x(?P<ep1>\d{1,3})(?:[ ._\-]*-[ ._\-]*(?P<ep2>\d{1,3}))?",
         re.IGNORECASE,
     ),
 ]
@@ -197,6 +197,29 @@ def clean_title(title: str) -> str:
         title,
         flags=re.IGNORECASE,
     )
+
+    # Remove common release/source tags
+    title = re.sub(
+        r"\b(webrip|web[- ]?dl|webdl|tvrip|bluray|bdrip|dvdrip|hdrip|hdtv|uhd|4k|amzn|nf)\b",
+        "",
+        title,
+        flags=re.IGNORECASE,
+    )
+
+    # Remove 'Seasons 1 to 5' or 'Season 1-5' expressions fully
+    title = re.sub(r"\bseasons?\s*\d+\s*(?:to|-)+\s*\d+\b", "", title, flags=re.IGNORECASE)
+
+    # Remove explicit 'Season 01' tokens entirely (word + number) early to avoid leaving stray numbers
+    title = re.sub(r"\bseason[s]?\s*\d{1,2}\b", "", title, flags=re.IGNORECASE)
+
+    # Remove collection words and numeric ranges (e.g., 'Complete Seasons 1 to 5')
+    title = re.sub(r"\b(complete|seasons?|season pack)\b", "", title, flags=re.IGNORECASE)
+    title = re.sub(r"\b\d+\s*(?:to|-)+\s*\d+\b", "", title, flags=re.IGNORECASE)
+    # Remove leftover 'to 5' segments if previous removals split tokens
+    title = re.sub(r"\bto\s*\d+\b", "", title, flags=re.IGNORECASE)
+
+    # Unquote numeric-only tokens like '227'
+    title = re.sub(r"'(?P<num>\d+)'", r"\g<num>", title)
 
     # Remove audio info
     title = re.sub(
