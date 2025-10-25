@@ -16,6 +16,7 @@
 <p align="center">
 	<a href="#features">Features</a> •
 	<a href="#documentation">Documentation</a> •
+	<a href="#developer-setup">Developer setup</a> •
 	<a href="#contributing">Contributing</a> •
 	<a href="#license">License</a>
 </p>
@@ -45,6 +46,56 @@ Rosey is a cross‑platform desktop utility (Windows + Linux) that scans a Sourc
 ## Status
 
 This repository currently focuses on specifications and design. Implementation details and architecture decisions live in the Tech Spec. Binaries and build instructions will be added once development begins.
+
+## Developer setup
+
+These steps assume Linux or Windows with a Python 3.11 virtual environment.
+
+Set up a virtual environment
+
+```bash
+# From repo root
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\\Scripts\\activate
+python -m pip install --upgrade pip
+```
+
+Install dependencies
+
+```bash
+# When pyproject.toml is added (M1):
+pip install -e ".[dev]"
+
+# Until then, there may be no installable package; you can still install dev tools:
+pip install pytest ruff mypy black
+```
+
+Run tests
+
+```bash
+pytest -q
+```
+
+Lint, type-check, and format
+
+```bash
+ruff check .
+mypy .
+black .
+```
+
+Run the application (future, after M1 scaffolding)
+
+```bash
+# After the package and app entrypoint exist under src/rosey/app.py:
+python -m rosey.app
+```
+
+Notes
+
+- The project uses the "src layout": code lives under `src/`, the package is `src/rosey`, imported as `import rosey`.
+- If UI tests need a display in CI, you can run them with `xvfb-run -a pytest -q` on Linux.
+- For coding agents and exact prompts, see `docs/IMPLEMENTATION_GUIDE.md` and `docs/AI_AGENT_PLAYBOOK.md`.
 
 ## Contributing
 

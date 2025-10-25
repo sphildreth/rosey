@@ -215,7 +215,9 @@ ehthumbs.db
 Desktop.ini
 
 # IDE settings (project-local)
-.vscode/
+# Ignore all VS Code workspace files by default, but keep launch.json versioned
+.vscode/*
+!.vscode/launch.json
 .idea/
 .history/
 
