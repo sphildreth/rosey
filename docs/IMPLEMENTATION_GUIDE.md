@@ -13,14 +13,14 @@ This guide translates the PRD into an agent-driven implementation plan. It defin
 - [x] [Phase B — M1: Scan + Identify (offline) + Score + Plan + CLI + Minimal UI](#phase-b)
 - [x] [Phase C — M2: Move Engine + Conflicts + Sidecars + Logging + Progress/Cancel](#phase-c)
 - [x] [Phase D — M3: Online Lookups (TMDB/TVDB) + Cache + Settings UI](#phase-d)
-- [ ] [Phase E — M4: Packaging (Win/Linux) + Icons + Docs + First Binaries](#phase-e)
+- [x] [Phase E — M4: Packaging (Win/Linux) + Icons + Docs + First Binaries](#phase-e)
 - [ ] [Continuous — Tests & Docs + Observability + Perf/Stress + Cross-Platform CI](#continuous)
 
 ---
 
 ## Coding Agent Template
 ```
-Task: Implement only the unchecked items in Phase D (see IMPLEMENTATION_GUIDE.md phase-b).
+Task: Implement only the unchecked items in Phase E (see IMPLEMENTATION_GUIDE.md phase-b).
 Scope: Modify only src/rosey/**, tests/**, docs/**, and packaging configs; keep the diff small and self-contained.
 Requirements: Add/update tests so the phase’s acceptance criteria pass; UI work must stay responsive (threads); online provider calls are opt-in and use recorded fixtures by default; dry-run is the default for move operations.
 Quality gates: pytest all green, ruff clean, mypy clean, UI smoke run OK.
@@ -31,8 +31,8 @@ Lint: ruff check . ; Format: black .
 Output: Code + tests + a brief summary of changes and how you verified them (commands and results). If blocked, state the minimal decision needed to proceed.
 
 After an item’s changes pass all quality gates, update docs/IMPLEMENTATION_GUIDE.md:
-In Phase D section, change that item’s checkbox to [x].
-If every item in Phase D is now checked, also check the corresponding Phase line in the Phase Map at the top.
+In Phase E section, change that item’s checkbox to [x].
+If every item in Phase E is now checked, also check the corresponding Phase line in the Phase Map at the top.
 Include IMPLEMENTATION_GUIDE.md in your unified diff when you update checkboxes.
 Do not check items that are only partially complete; if partially done, leave as [ ] and mention “partial” in your summary.
 Only mark items completed if you added/changed code and tests that verify the acceptance criteria
@@ -270,9 +270,9 @@ class MoveResult(BaseModel):
 <a id="phase-e"></a>
 ### Phase E — M4: Packaging + Icons + Docs + Binaries
 
-- [ ] PyInstaller specs for Windows/Linux; app icons.
-- [ ] Post-build smoke tests: launch, pick folders, scan, dry-run move, exit.
-- [ ] User-facing docs: setup, troubleshooting (paths, permissions, network shares).
+- [x] PyInstaller specs for Windows/Linux; app icons.
+- [x] Post-build smoke tests: launch, pick folders, scan, dry-run move, exit.
+- [x] User-facing docs: setup, troubleshooting (paths, permissions, network shares).
 
 <a id="continuous"></a>
 ### Continuous — Tests, Docs, Observability, Performance

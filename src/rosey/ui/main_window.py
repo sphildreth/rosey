@@ -1,6 +1,9 @@
 """Minimal UI for Rosey."""
 
-from PySide6.QtCore import QRunnable, Qt, Signal, Slot
+from pathlib import Path
+from typing import Literal, cast
+
+from PySide6.QtCore import QRunnable, Qt, QThreadPool, Signal, Slot
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -21,11 +24,17 @@ from PySide6.QtWidgets import (
 
 from rosey.config import get_config_path, load_config, save_config
 from rosey.identifier import identify_file
+from rosey.models import IdentificationResult
+from rosey.mover import move_with_sidecars
 from rosey.planner import plan_path
 from rosey.providers import ProviderManager
 from rosey.scanner import scan_directory
 from rosey.scorer import score_identification
+from rosey.ui.progress_dialog import ProgressDialog
 from rosey.ui.settings_dialog import SettingsDialog
+
+# Type alias for mover conflict policy (excludes "ask")
+MoverPolicy = Literal["skip", "replace", "keep_both"]
 
 
 class ScanWorker(QRunnable):
@@ -37,10 +46,21 @@ class ScanWorker(QRunnable):
         progress = Signal(str)
         finished = Signal(list)
 
-    def __init__(self, source_path: str, max_workers: int = 8) -> None:
+    def __init__(
+        self,
+        source_path: str,
+        *,
+        max_workers: int = 8,
+        follow_symlinks: bool = False,
+        movies_root: str = "",
+        tv_root: str = "",
+    ) -> None:
         super().__init__()
         self.source_path = source_path
         self.max_workers = max_workers
+        self.follow_symlinks = follow_symlinks
+        self.movies_root = movies_root
+        self.tv_root = tv_root
         self.signals = self.Signals()
 
     def run(self) -> None:
@@ -48,7 +68,11 @@ class ScanWorker(QRunnable):
         self.signals.progress.emit(f"Scanning {self.source_path}...")
 
         try:
-            results = scan_directory(self.source_path, max_workers=self.max_workers)
+            results = scan_directory(
+                self.source_path,
+                max_workers=self.max_workers,
+                follow_symlinks=self.follow_symlinks,
+            )
             video_results = [r for r in results if r.is_video and not r.error]
 
             items = []
@@ -61,11 +85,11 @@ class ScanWorker(QRunnable):
                 # Score
                 score = score_identification(ident_result)
 
-                # Plan destination (using dummy paths for now)
+                # Plan destination using configured roots
                 destination = plan_path(
                     ident_result.item,
-                    movies_root="/media/movies",
-                    tv_root="/media/tv",
+                    movies_root=self.movies_root,
+                    tv_root=self.tv_root,
                 )
 
                 items.append(
@@ -81,12 +105,79 @@ class ScanWorker(QRunnable):
             self.signals.progress.emit(f"Error: {e}")
 
 
+class DiscoverWorker(QRunnable):
+    """Background worker for provider metadata discovery."""
+
+    class Signals(QWidget):
+        progress = Signal(str)
+        finished = Signal(list)
+
+    def __init__(self, items: list[dict], provider_manager: ProviderManager) -> None:
+        super().__init__()
+        self.items = items
+        self.pm = provider_manager
+        self.signals = self.Signals()
+
+    def run(self) -> None:
+        updated: list[dict] = []
+        total = len(self.items)
+        for idx, result in enumerate(self.items, start=1):
+            item = result["item"]
+            self.signals.progress.emit(f"Discover {idx}/{total}: {item.title or item.source_path}")
+            try:
+                # Movies: look up TMDB by title/year
+                if item.kind == "movie":
+                    if self.pm.enabled and not (item.nfo.get("tmdbid") if item.nfo else None):
+                        title = item.title or ""
+                        year = item.year
+                        movies = self.pm.search_movie(title, year)
+                        if movies:
+                            m = movies[0]
+                            tmdbid = str(m.get("id"))
+                            item.nfo["tmdbid"] = tmdbid
+                            # Update normalized title/year if missing
+                            item.title = item.title or m.get("title") or m.get("name")
+                            item.year = item.year or (
+                                (m.get("release_date") or "").split("-")[0] or None
+                            )
+                # Episodes: look up TV show and optionally episode title
+                elif (
+                    item.kind == "episode"
+                    and self.pm.enabled
+                    and not (item.nfo.get("tmdbid") if item.nfo else None)
+                ):
+                    title = item.title or ""
+                    year = item.year
+                    shows = self.pm.search_tv(title, year)
+                    if shows:
+                        tv = shows[0]
+                        tvid = str(tv.get("id"))
+                        item.nfo["tmdbid"] = tvid
+                        # Fetch episode details for first episode number
+                        if item.season is not None and item.episodes:
+                            ep_num = item.episodes[0]
+                            ep = self.pm.get_episode(tvid, item.season, ep_num)
+                            if ep and ep.get("name"):
+                                item.nfo["episode_title"] = ep.get("name")
+
+                # Re-score with updated metadata
+                ident = IdentificationResult(item=item, reasons=["Online metadata (cached)"])
+                new_score = score_identification(ident)
+                result["score"] = new_score
+                updated.append(result)
+            except Exception as e:  # pragma: no cover - UI thread
+                self.signals.progress.emit(f"Discover error: {e}")
+
+        self.signals.finished.emit(updated)
+
+
 class MainWindow(QMainWindow):
     """Main window for Rosey."""
 
     def __init__(self) -> None:
         super().__init__()
         self.items: list[dict] = []
+        self._thread_pool = QThreadPool.globalInstance()
 
         # Load configuration
         self.config = load_config()
@@ -146,6 +237,10 @@ class MainWindow(QMainWindow):
         self.btn_select_green = QPushButton("Select All Green")
         self.btn_select_green.clicked.connect(self.on_select_green)
         toolbar.addWidget(self.btn_select_green)
+
+        self.btn_move = QPushButton("Move Selected")
+        self.btn_move.clicked.connect(self.on_move_selected)
+        toolbar.addWidget(self.btn_move)
 
         self.btn_clear = QPushButton("Clear Selection")
         self.btn_clear.clicked.connect(self.on_clear_selection)
@@ -331,9 +426,164 @@ class MainWindow(QMainWindow):
     @Slot()
     def on_scan(self) -> None:
         """Handle scan button click."""
-        # For demo, just use seed data
-        self.activity_log.append("Scan button clicked (seed data mode)")
-        self.statusBar().showMessage("Scan completed - using seed data")
+        source = self.config.paths.source
+        if not source:
+            self.activity_log.append(
+                "No source path configured. Open Settings to set Source Folder."
+            )
+            self.statusBar().showMessage("No source path configured")
+            return
+
+        self.activity_log.append(f"Starting scan: {source}")
+        self.statusBar().showMessage("Scanning...")
+        self.btn_scan.setEnabled(False)
+
+        worker = ScanWorker(
+            source,
+            max_workers=self.config.scanning.concurrency_local,
+            follow_symlinks=self.config.scanning.follow_symlinks,
+            movies_root=self.config.paths.movies,
+            tv_root=self.config.paths.tv,
+        )
+        worker.signals.progress.connect(self.on_scan_progress)
+        worker.signals.finished.connect(self.on_scan_finished)
+        self._thread_pool.start(worker)
+
+    @Slot(str)
+    def on_scan_progress(self, message: str) -> None:
+        """Receive progress updates from scan worker."""
+        self.activity_log.append(message)
+
+    @Slot(list)
+    def on_scan_finished(self, items: list) -> None:
+        """Handle scan completion and populate table."""
+        self.items = items
+        self.populate_table(items)
+        self.activity_log.append(f"Scan completed - {len(items)} items")
+        self.statusBar().showMessage("Scan completed")
+        self.btn_scan.setEnabled(True)
+
+    def _get_selected_rows(self) -> list[int]:
+        rows: list[int] = []
+        for row in range(self.table.rowCount()):
+            check_item = self.table.item(row, 0)
+            if check_item and check_item.checkState() == Qt.CheckState.Checked:
+                rows.append(row)
+        return rows
+
+    def _items_from_rows(self, rows: list[int]) -> list[dict]:
+        return [self.items[row] for row in rows if 0 <= row < len(self.items)]
+
+    @Slot()
+    def on_move_selected(self) -> None:
+        """Move selected items (respects dry-run setting)."""
+        rows = self._get_selected_rows()
+        if not rows:
+            self.activity_log.append("No items selected to move")
+            self.statusBar().showMessage("No items selected")
+            return
+
+        to_move = self._items_from_rows(rows)
+
+        dry_run = self.config.behavior.dry_run
+        default_policy = self.config.behavior.conflict_policy
+
+        # Resolve conflicts upfront and ensure policy matches mover expectations
+        # mover accepts only: "skip", "replace", "keep_both"
+        move_specs: list[dict] = []
+        for r in to_move:
+            item = r["item"]
+            dest = r["destination"]
+
+            eff_policy: MoverPolicy
+            if default_policy == "skip":
+                eff_policy = "skip"
+            elif default_policy == "replace":
+                eff_policy = "replace"
+            elif default_policy == "keep_both":
+                eff_policy = "keep_both"
+            else:  # "ask"
+                if Path(dest).exists():
+                    from rosey.ui.conflict_dialog import ConflictDialog
+
+                    dlg = ConflictDialog(item.source_path, dest, self)
+                    chosen = dlg.get_policy() if dlg.exec() else "skip"
+                    if chosen in ("skip", "replace", "keep_both"):
+                        eff_policy = cast(MoverPolicy, chosen)
+                    else:
+                        eff_policy = "skip"
+                else:
+                    # No conflict expected; default to safe policy
+                    eff_policy = "skip"
+
+            move_specs.append({"item": item, "destination": dest, "policy": eff_policy})
+
+        progress = ProgressDialog("Moving Files", self)
+        cancelled = {"flag": False}
+
+        def on_cancel() -> None:
+            cancelled["flag"] = True
+
+        progress.cancel_requested.connect(on_cancel)
+        progress.show()
+        self.statusBar().showMessage("Moving...")
+
+        class MoveWorker(QRunnable):
+            class Signals(QWidget):
+                progress = Signal(str)
+                finished = Signal(dict)
+
+            def __init__(self, items: list[dict]) -> None:
+                super().__init__()
+                self.items = items
+                self.signals = self.Signals()
+
+            def run(self) -> None:  # noqa: D401
+                moved = 0
+                errors: list[str] = []
+                total = len(self.items)
+                for idx, spec in enumerate(self.items, start=1):
+                    if cancelled["flag"]:
+                        self.signals.progress.emit("Operation cancelled by user")
+                        break
+                    item = spec["item"]
+                    dest = spec["destination"]
+                    policy = spec.get("policy", "skip")
+                    self.signals.progress.emit(f"Moving {idx}/{total}: {dest}")
+                    try:
+                        move_result = move_with_sidecars(
+                            item,
+                            dest,
+                            conflict_policy=policy,
+                            dry_run=dry_run,
+                        )
+                        if move_result.success:
+                            moved += 1
+                        else:
+                            errors.extend(move_result.errors)
+                    except Exception as e:  # pragma: no cover - UI thread
+                        errors.append(str(e))
+
+                    # Emit incremental progress
+                    self.signals.progress.emit(f"Progress: {idx}/{total}")
+
+                self.signals.finished.emit({"moved": moved, "total": total, "errors": errors})
+
+        worker = MoveWorker(move_specs)
+        worker.signals.progress.connect(progress.append_detail)
+        worker.signals.progress.connect(progress.set_status)
+
+        def on_finished(summary: dict) -> None:
+            moved = summary.get("moved", 0)
+            total = summary.get("total", 0)
+            errors = summary.get("errors", [])
+            for err in errors:
+                progress.append_detail(f"Error: {err}")
+            progress.set_complete(success=len(errors) == 0)
+            self.statusBar().showMessage(f"Move complete: {moved}/{total}")
+
+        worker.signals.finished.connect(on_finished)
+        self._thread_pool.start(worker)
 
     @Slot()
     def on_select_green(self) -> None:
@@ -473,26 +723,40 @@ class MainWindow(QMainWindow):
             self.on_discover(item)
 
     def on_discover(self, tree_item: QTreeWidgetItem) -> None:
-        """Handle discover metadata action.
+        """Handle discover metadata action using a background worker."""
+        scope = tree_item.text(0)
+        if scope == "Movies":
+            target_items = [r for r in self.items if getattr(r.get("item"), "kind", "") == "movie"]
+        elif scope == "TV Shows":
+            target_items = [
+                r for r in self.items if getattr(r.get("item"), "kind", "") == "episode"
+            ]
+        else:
+            target_items = list(self.items)
 
-        Args:
-            tree_item: Selected tree item
-        """
-        item_text = tree_item.text(0)
-        self.activity_log.append(f"Discovering metadata for: {item_text}")
-        self.statusBar().showMessage(f"Discovering metadata for {item_text}...")
+        if not target_items:
+            self.activity_log.append("No items available for discovery in this scope")
+            return
 
-        # In a real implementation, this would run in a background thread
-        # For now, we'll just show a placeholder message
+        self.activity_log.append(f"Discovering metadata for {len(target_items)} items...")
+        self.statusBar().showMessage("Discovering metadata...")
 
-        # TODO: Implement background discovery task that:
-        # 1. Finds all items in the selected tree node
-        # 2. Queries provider_manager for each item
-        # 3. Updates scores and metadata
-        # 4. Refreshes the table
+        worker = DiscoverWorker(target_items, self.provider_manager)
+        worker.signals.progress.connect(self.on_scan_progress)
 
-        self.activity_log.append("Discover: Feature stub - provider calls would happen here")
-        self.statusBar().showMessage("Ready")
+        def on_finished(updated: list) -> None:
+            # Update self.items in place by matching source_path
+            by_src = {r["item"].source_path: r for r in updated}
+            for i, r in enumerate(self.items):
+                src = r["item"].source_path
+                if src in by_src:
+                    self.items[i] = by_src[src]
+            self.populate_table(self.items)
+            self.activity_log.append("Discover complete")
+            self.statusBar().showMessage("Discover complete")
+
+        worker.signals.finished.connect(on_finished)
+        self._thread_pool.start(worker)
 
 
 def main() -> int:

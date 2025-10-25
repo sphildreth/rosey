@@ -38,6 +38,7 @@ Rosey is a cross‑platform desktop utility (Windows + Linux) that scans a Sourc
 
 ## Documentation
 
+- **User Guide**: [docs/SETUP.md](./docs/SETUP.md) — installation, configuration, troubleshooting
 - Docs Index: [docs/README.md](./docs/README.md)
 - Product Requirements: [docs/PRD.md](./docs/PRD.md)
 - Technical Specification: [docs/TECH_SPEC.md](./docs/TECH_SPEC.md)
@@ -45,7 +46,7 @@ Rosey is a cross‑platform desktop utility (Windows + Linux) that scans a Sourc
 
 ## Status
 
-This repository currently focuses on specifications and design. Implementation details and architecture decisions live in the Tech Spec. Binaries and build instructions will be added once development begins.
+Core features are implemented (scanning, identification, scoring, planning, moving, online providers, UI). Packaging and distribution are ready. See [docs/SETUP.md](./docs/SETUP.md) for user installation guide.
 
 ## Developer setup
 
@@ -84,11 +85,30 @@ mypy .
 black .
 ```
 
-Run the application (future, after M1 scaffolding)
+Run the application
 
 ```bash
-# After the package and app entrypoint exist under src/rosey/app.py:
 python -m rosey.app
+```
+
+Build binary packages
+
+```bash
+# Linux/macOS
+./scripts/build_package.sh
+
+# Windows
+scripts\build_package.bat
+```
+
+Run smoke tests on packaged binary
+
+```bash
+# Linux/macOS
+./scripts/smoke_test.sh
+
+# Windows
+scripts\smoke_test.bat
 ```
 
 Notes

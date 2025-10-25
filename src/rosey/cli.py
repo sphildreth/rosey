@@ -7,6 +7,7 @@ from pathlib import Path
 
 from rosey.config import load_config, save_config
 from rosey.identifier import identify_file
+from rosey.mover import move_with_sidecars
 from rosey.planner import plan_path
 from rosey.scanner import scan_directory
 from rosey.scorer import score_identification
@@ -73,6 +74,13 @@ def main() -> int:
         "--save-config",
         action="store_true",
         help="Save provided paths to config file",
+    )
+
+    parser.add_argument(
+        "--conflict-policy",
+        choices=["skip", "replace", "keep_both"],
+        default="skip",
+        help="Conflict policy for live moves (default: skip)",
     )
 
     args = parser.parse_args()
@@ -203,7 +211,31 @@ def main() -> int:
     if args.dry_run:
         logger.info("DRY-RUN mode - no files were moved")
     else:
-        logger.info("LIVE mode - files would be moved (not implemented yet)")
+        logger.info("\nStep 3: Moving files (LIVE mode)")
+        moved = 0
+        errors: list[str] = []
+        for result in results:
+            item = result["item"]
+            dest = result["destination"]
+            try:
+                move_result = move_with_sidecars(
+                    item,
+                    dest,
+                    conflict_policy=args.conflict_policy,
+                    dry_run=False,
+                )
+                if move_result.success:
+                    moved += 1
+                    logger.info(f"Moved: {dest}")
+                else:
+                    for err in move_result.errors:
+                        logger.error(f"Move error: {err}")
+                    errors.extend(move_result.errors)
+            except Exception as e:  # pragma: no cover
+                logger.error(f"Unexpected move error for {item.source_path}: {e}")
+                errors.append(str(e))
+
+        logger.info(f"Move summary: {moved}/{len(results)} succeeded; {len(errors)} errors")
 
     return 0
 
