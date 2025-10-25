@@ -10,7 +10,7 @@ This guide translates the PRD into an agent-driven implementation plan. It defin
 ## Phase Map
 
 - [x] [Phase A — Planning & Guardrails](#phase-a)
-- [ ] [Phase B — M1: Scan + Identify (offline) + Score + Plan + CLI + Minimal UI](#phase-b)
+- [x] [Phase B — M1: Scan + Identify (offline) + Score + Plan + CLI + Minimal UI](#phase-b)
 - [ ] [Phase C — M2: Move Engine + Conflicts + Sidecars + Logging + Progress/Cancel](#phase-c)
 - [ ] [Phase D — M3: Online Lookups (TMDB/TVDB) + Cache + Settings UI](#phase-d)
 - [ ] [Phase E — M4: Packaging (Win/Linux) + Icons + Docs + First Binaries](#phase-e)
@@ -237,14 +237,14 @@ class MoveResult(BaseModel):
 <a id="phase-b"></a>
 ### Phase B — M1: Core Library + CLI + Minimal UI
 
-- [ ] Implement scanner with concurrency knobs and error logging.
-- [ ] Implement offline identifier (nfo + filename/folder patterns).
-- [ ] Implement scorer (0–100) with explicit reasons and thresholds.
-- [ ] Implement path planner per Jellyfin rules and sanitization.
-- [ ] Provide CLI to run scan→identify→score→plan (dry-run by default).
-- [ ] Minimal PySide6 UI: tree (left), grid (right), filters, Select All Green.
-- [ ] Background workers for scanning; UI remains responsive.
-- [ ] Tests: scanner/identifier/scorer/planner + UI headless checks.
+- [x] Implement scanner with concurrency knobs and error logging.
+- [x] Implement offline identifier (nfo + filename/folder patterns).
+- [x] Implement scorer (0–100) with explicit reasons and thresholds.
+- [x] Implement path planner per Jellyfin rules and sanitization.
+- [x] Provide CLI to run scan→identify→score→plan (dry-run by default).
+- [x] Minimal PySide6 UI: tree (left), grid (right), filters, Select All Green.
+- [x] Background workers for scanning; UI remains responsive.
+- [x] Tests: scanner/identifier/scorer/planner + UI headless checks.
 
 <a id="phase-c"></a>
 ### Phase C — M2: Move Engine + Conflicts + Logging + Progress/Cancel
