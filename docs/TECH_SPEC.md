@@ -6,10 +6,10 @@ Version: 1.0 • Date: 2025-10-25
 - **Language:** Python 3.11+
 - **UI:** PySide6 (Qt 6, Widgets)
 - **Concurrency:** QThreadPool + QRunnable; signals/slots for progress
-- **HTTP:** httpx (with limits/retries) or requests + backoff
+- **HTTP:** httpx.Client (synchronous, thread-safe)
 - **Cache:** SQLite (sqlite3 / SQLAlchemy or sqlmodel)
-- **Config:** pydantic model → `rosey.json`
-- **Logging:** logging + RotatingFileHandler (daily or size‑based)
+- **Config:** pydantic model → `rosey.json` (in app data dir); `keyring` for secrets
+- **Logging:** logging + RotatingFileHandler (in app data dir)
 - **Packaging:** PyInstaller (`--windowed`) for Windows & Linux
 
 ## 2) Architecture
@@ -21,7 +21,7 @@ src/
   tasks/
     scan_task.py    # QRunnable: scan + offline identify
     move_task.py    # QRunnable: plan application (move/copy+delete)
-    lookup_task.py  # QRunnable: online provider enrichment (optional)
+    lookup_task.py  # QRunnable: online provider enrichment
   engine/
     scanner.py      # enumerate FS, detect network share vs local
     nfo.py          # parse .nfo
@@ -36,7 +36,7 @@ src/
     config.py       # pydantic settings, load/save
     utils.py        # path, long‑path helpers, throttling
   assets/           # icons, qss
-tests/              # pytest: unit + parity (optional)
+tests/              # pytest: unit + parity
 ```
 
 ## 3) UI behavior
@@ -49,7 +49,13 @@ tests/              # pytest: unit + parity (optional)
 ## 4) Data models
 ```python
 from dataclasses import dataclass
+from enum import Enum, auto
 from typing import Optional, List
+
+class MediaType(Enum):
+    UNKNOWN = auto()
+    MOVIE = auto()
+    TV = auto()
 
 @dataclass
 class ProviderMatch:
@@ -61,7 +67,7 @@ class ProviderMatch:
 @dataclass
 class Candidate:
     source_path: str
-    type: str   # "Unknown" | "Movie" | "TV"
+    type: MediaType   # Enum for type safety
     proposed_name: str
     confidence: int
     reasons: List[str]
@@ -75,9 +81,9 @@ class Candidate:
 ## 5) Engine essentials
 ### Scanner
 - Use `os.scandir()` recursively; gather candidate roots (movie folders, show/season, lone video files).
-- Detect network share:
-  - Windows UNC: path starts with `\\\\`.
-  - Linux mounts: under `/mnt`, `/media`, or GVFS `smb-share:`/NFS.
+- **Robust network share detection:**
+  - Windows: Use `WNetGetConnection` via `ctypes` to check if a path is on a mapped network drive.
+  - Linux: Check filesystem type via `findmnt -T <path>` or by parsing `/proc/mounts`.
 - Concurrency knobs: `max_workers_local=8`, `max_workers_network=3` (configurable).
 
 ### Patterns & NFO
@@ -86,7 +92,7 @@ class Candidate:
 - Parse `.nfo` via `xml.etree.ElementTree`, tolerant to whitespace/encoding.
 
 ### Online lookups
-- **httpx.AsyncClient** with limits; semaphore for rate limit; retries with exponential backoff on 429/5xx.
+- **httpx.Client** with limits; semaphore for rate limit; retries with exponential backoff on 429/5xx.
 - Cache: SQLite tables keyed by (`kind`,`key`) → JSON blob + `updated_at`.
 - Respect `language/region` for titles.
 - Attribution: “Data provided by TMDB/TVDB” in About.
@@ -100,6 +106,7 @@ class Candidate:
 - Sanitize invalid characters: `<>:"/\|?*` and trailing spaces/dots; collapse spaces.
 
 ### Mover
+- **Transactional moves:** For multi-file operations (e.g., a TV season), treat the move as a single transaction. If any file fails to copy, abort the operation and delete any partially copied files from the destination to ensure a clean rollback. Only delete source files after all copies are verified.
 - **Same volume:** `os.replace()` (atomic rename).
 - **Cross volume:** stream copy (`shutil.copy2`) then `os.remove()`; report bytes for progress.
 - Bounded concurrency; cancellation token checks between files.
@@ -124,10 +131,11 @@ class Candidate:
   "dryRun": false
 }
 ```
-- Store secrets locally; Windows DPAPI optional; Linux uses file permissions.
+- Use a library like `appdirs` to store config and logs in a standard, platform-specific application data directory (e.g., `~/.config/rosey`).
+- **Secrets:** Use the `keyring` library to store API keys in the OS credential manager (Keychain, Windows Credential Manager, Secret Service). Avoid storing secrets in the JSON file.
 
 ### Logging
-- `logging` with RotatingFileHandler (e.g., 5×5MB), path in `./logs/rosey.log`.
+- `logging` with RotatingFileHandler (e.g., 5×5MB), path in standard app data log directory.
 - Redact API keys; log src→dest, durations, bytes moved, and errors.
 
 ## 7) Performance

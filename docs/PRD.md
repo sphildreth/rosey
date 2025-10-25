@@ -26,16 +26,16 @@ Privacy‑first: no telemetry; provider calls only when enabled.
 - Single window PySide6 UI (Qt Widgets) with **light/dark** theme toggle.
 - Folder pickers: **Source**, **Movies Target**, **TV Target**.
 - Scanning (recursive) of local + network shares (UNC on Windows; SMB/NFS mounts on Linux).
-- Identification (offline): `.nfo`, folder names, filename patterns (`SxxEyy`, `1x02`, `YYYY-MM-DD`).
+- Identification (offline): `.nfo`, folder names, filename patterns (`SxxEyy`, `1x02`, `YYYY-MM-DD`, multi-episode `S01E01-E02`, multi-part `Part 1`).
 - Identification (online, optional): **TMDB** primary, **TVDB** optional; caching and rate limiting.
-- Confidence scoring with short “reasons” tooltip.
+- Confidence scoring with short “reasons” tooltip (e.g., "Matched filename pattern", "Found TMDB ID in NFO").
 - Tree view of identified Shows and Movies (On left side of window).
 - Grid with checkboxes; **Select All Green**; **Move Selected** (On right side of window).
 - Jellyfin naming defaults:
   - Movie: `Movies/Title (Year) [ExternalId]/Title (Year).ext`
   - TV: `Shows/Show Title (Year) [ExternalId]/Season 01/Show Title - S01E02 - Episode Title.ext`
   - Specials/Extras/Bonus → `extras`.
-- Conflict dialog (Skip / Replace / Keep Both).
+- Conflict dialog (Skip / Replace / Keep Both); "Keep Both" appends a numeric suffix, e.g., `(1)`.
 - Config saved to `rosey.json` (paths, provider keys, theme, concurrency, cache TTL).
 - Logging to file (rotating) and on‑screen status pane.
 
@@ -44,18 +44,20 @@ Privacy‑first: no telemetry; provider calls only when enabled.
 - Daemon/scheduler mode.
 - Advanced duplicate detection/merging.
 - Multi‑user sync.
+- DVD/Blu-ray folder structures (`VIDEO_TS`, `BDMV`).
 
 ## 5) UX requirements
 - See [UI_MOCKUPS](./mockups/UI_MOCKUPS.md)
 
 ## 6) Functional requirements
 - **FR‑1 Scan:** recursively enumerate **Source** with concurrency tuned for local vs network shares.
-- **FR‑2 Identify (offline):** classify Movie/TV/Unknown from `.nfo`, folders, filenames.
+- **FR‑2 Identify (offline):** classify Movie/TV/Unknown from `.nfo`, folders, and filenames, including multi-episode (`S01E01-E02`) and multi-part (`Part 1`) patterns.
 - **FR‑3 Online Lookups (opt‑in):** TMDB/TVDB with local cache and rate limit; localization (language/region).
-- **FR‑4 Score:** 0–100 with reasons; thresholds: Green ≥70, Yellow 40–69, Red <40.
-- **FR‑5 Plan:** compute sanitized destination paths following Jellyfin rules; preserve extension.
+- **FR‑4 Score:** 0–100 with explicit reasons (e.g., "Matched filename", "Found ID in .nfo"); thresholds: Green ≥70, Yellow 40–69, Red <40.
+- **FR‑5 Plan:** compute sanitized destination paths following Jellyfin rules, including for multi-episode/part files; preserve extension.
 - **FR‑6 Present:** show candidates; allow selection helpers; filter and sort.
-- **FR‑7 Move:** atomic rename on same volume; copy+delete across volumes; conflict handling; progress and cancel.
+- **FR‑7 Move:** execute file operations with robust error handling and progress updates. On same volume, use atomic renames. Across volumes, use a safe copy-verify-quarantine process (copy, verify size, then move original to a temporary folder).
+- **FR-7.1 Move Sidecar Files:** When a media file is moved, all associated sidecar files (e.g., `.srt`, `.nfo`, `.jpg`) sharing the same base filename are also moved.
 - **FR‑8 Config & Logging:** load/save `rosey.json`; rotate logs; redact secrets in logs.
 - **FR‑9 Theming:** global light/dark toggle; remember user’s last theme.
 
@@ -114,21 +116,9 @@ Shows
 Movies
 ├── Best_Movie_Ever (2019)
 │   ├── Best_Movie_Ever (2019).mp4
-│   ├── Best_Movie_Ever (2019).nfo
 │   ├── Best_Movie_Ever (2019).en_us.srt
-│   ├── cover.png
-│   └── theme.mp3
 └── Movie (2021) [imdbid-tt12801262]
-    ├── backdrop.jpg
-    └── VIDEO_TS
-        ├── VIDEO_TS.BUP
-        ├── VIDEO_TS.IFO
-        ├── VIDEO_TS.VOB
-        ├── VTS_01_0.BUP
-        ├── VTS_01_0.IFO
-        ├── VTS_01_0.VOB
-        ├── VTS_01_1.VOB
-        └── VTS_01_2.VOB
+│   ├── Movie (2021) [imdbid-tt12801262].mp4    
 ```
 
 #### References
