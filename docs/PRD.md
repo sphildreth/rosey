@@ -56,7 +56,7 @@ Privacy‑first: no telemetry; provider calls only when enabled.
 - **FR‑4 Score:** 0–100 with explicit reasons (e.g., "Matched filename", "Found ID in .nfo"); thresholds: Green ≥70, Yellow 40–69, Red <40.
 - **FR‑5 Plan:** compute sanitized destination paths following Jellyfin rules, including for multi-episode/part files; preserve extension.
 - **FR‑6 Present:** show candidates; allow selection helpers; filter and sort.
-- **FR‑7 Move:** execute file operations with robust error handling and progress updates. On same volume, use atomic renames. Across volumes, use a safe copy-verify-quarantine process (copy, verify size, then move original to a temporary folder).
+- **FR‑7 Move:** execute file operations with robust error handling and progress updates. On same volume, use atomic renames. Across volumes, use a safe copy-verify-quarantine process (copy, verify size, then move original to a temporary folder). Moves should be transactional; if any part of a multi-file operation fails, the system will attempt to roll back any changes made in that operation to leave the destination clean.
 - **FR-7.1 Move Sidecar Files:** When a media file is moved, all associated sidecar files (e.g., `.srt`, `.nfo`, `.jpg`) sharing the same base filename are also moved.
 - **FR‑8 Config & Logging:** load/save `rosey.json`; rotate logs; redact secrets in logs.
 - **FR‑9 Theming:** global light/dark toggle; remember user’s last theme.

@@ -9,8 +9,8 @@ They map directly to PySide6 widgets (Qt Widgets), but they are toolkit-agnostic
 ```
 ┌───────────────────────────────────────────────────────────────────────────────────────────┐
 │ Action Bar                                                                                │
-│ [ Run btnRun ]  [ Configuration btnConfig ]  [ Scan btnScan ]  [ Move Selected btnMove ] │
-│ [ Select All Green btnSelectGreen ]  [ Clear btnClear ]  [ Help btnHelp ]                │
+│ [ Scan btnScan ] [ Move Selected btnMove ] │ [Filter: All btnFilterAll] [Green btnFilterGreen] [Yellow btnFilterYellow] [Red btnFilterRed] │ [ Configuration btnConfig ] │
+│ [ Select All Green btnSelectGreen ]  [ Clear View btnClearView ]  [ Help btnHelp ]                │
 ├───────────────────────────────────────────────────────────────────────────────────────────┤
 │ Left Pane: Library Tree (treeLibrary)          │ Right Pane: Grid (tableDetails)          │
 │ ┌─────────────────────────────────────────────┐ │ ┌──────────────────────────────────────┐ │
@@ -37,9 +37,10 @@ They map directly to PySide6 widgets (Qt Widgets), but they are toolkit-agnostic
 ```
 
 ### Interaction notes
-- Selecting a node in `treeLibrary` filters `tableDetails` to that scope (show/season/movie).  
+- Selecting a node in `treeLibrary` filters `tableDetails` to that scope (show/season/movie).
+- The filter buttons (`btnFilter*`) update `tableDetails` to show items of a specific confidence level.
+- `btnClearView` clears the `treeLibrary` and `tableDetails` views, but does not delete any data.
 - Double‑clicking a grid row opens **Detail Dialog** (`dlgDetail`) for that media file.  
-- The **Run** button executes the current plan (equivalent to “Move Selected”), but stays disabled until a plan exists.
 
 ---
 
@@ -54,7 +55,10 @@ They map directly to PySide6 widgets (Qt Widgets), but they are toolkit-agnostic
 │ [x] Use Online Lookups (chkUseOnline)                              │
 │ Provider Priority (cmbPriority1, cmbPriority2)                     │
 │ TMDB API Key (txtTmdbKey)   [ Test btnTestTmdb ]                   │
+│ TVDB API Key (txtTvdbKey)   [ Test btnTestTvdb ]                   │
 │ Language (cmbLang)          Region (cmbRegion)                     │
+│                                                                    │
+│ [ ] Dry Run (Preview changes without moving files) (chkDryRun)     │
 │                                                                    │
 │ Concurrency: Local (spinLocal)  Network (spinNetwork)              │
 │ Cache TTL days (spinTtl)   Cache Dir (txtCacheDir) [Browse]        │
@@ -62,6 +66,9 @@ They map directly to PySide6 widgets (Qt Widgets), but they are toolkit-agnostic
 │                                                                    │
 │ [ Save btnSaveConfig ]                     [ Cancel btnCancelCfg ] │
 └────────────────────────────────────────────────────────────────────┘
+
+### Interaction notes
+- API keys are stored securely in the system keychain, not the JSON config. The text box will show a placeholder like `********` if a key is present.
 ```
 
 ---

@@ -107,6 +107,7 @@ class Candidate:
 
 ### Mover
 - **Transactional moves:** For multi-file operations (e.g., a TV season), treat the move as a single transaction. If any file fails to copy, abort the operation and delete any partially copied files from the destination to ensure a clean rollback. Only delete source files after all copies are verified.
+- **Sidecar files:** When a media file is moved, the mover will also find and move any associated sidecar files (e.g., `.srt`, `.nfo`, `.jpg`) that share the same base filename.
 - **Same volume:** `os.replace()` (atomic rename).
 - **Cross volume:** stream copy (`shutil.copy2`) then `os.remove()`; report bytes for progress.
 - Bounded concurrency; cancellation token checks between files.
