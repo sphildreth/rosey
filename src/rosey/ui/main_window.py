@@ -1,9 +1,11 @@
 """Minimal UI for Rosey."""
 
+import contextlib
 from pathlib import Path
 from typing import Literal, cast
 
 from PySide6.QtCore import QRunnable, Qt, QThreadPool, Signal, Slot
+from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -13,6 +15,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QPushButton,
     QSplitter,
+    QStyle,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
@@ -30,6 +33,7 @@ from rosey.planner import plan_path
 from rosey.providers import ProviderManager
 from rosey.scanner import scan_directory
 from rosey.scorer import score_identification
+from rosey.ui.identify_dialog import IdentifyDialog
 from rosey.ui.progress_dialog import ProgressDialog
 from rosey.ui.settings_dialog import SettingsDialog
 
@@ -177,6 +181,8 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.items: list[dict] = []
+        self.movie_nodes: dict[str, QTreeWidgetItem] = {}
+        self.show_nodes: dict[str, QTreeWidgetItem] = {}
         self._thread_pool = QThreadPool.globalInstance()
 
         # Load configuration
@@ -227,22 +233,29 @@ class MainWindow(QMainWindow):
         toolbar = QHBoxLayout()
 
         self.btn_scan = QPushButton("Scan")
+        self.btn_scan.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon))
         self.btn_scan.clicked.connect(self.on_scan)
         toolbar.addWidget(self.btn_scan)
 
         self.btn_settings = QPushButton("Settings")
+        self.btn_settings.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_VistaShield))
         self.btn_settings.clicked.connect(self.on_settings)
         toolbar.addWidget(self.btn_settings)
 
         self.btn_select_green = QPushButton("Select All Green")
+        self.btn_select_green.setIcon(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_DialogApplyButton)
+        )
         self.btn_select_green.clicked.connect(self.on_select_green)
         toolbar.addWidget(self.btn_select_green)
 
         self.btn_move = QPushButton("Move Selected")
+        self.btn_move.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowForward))
         self.btn_move.clicked.connect(self.on_move_selected)
         toolbar.addWidget(self.btn_move)
 
         self.btn_clear = QPushButton("Clear Selection")
+        self.btn_clear.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_TrashIcon))
         self.btn_clear.clicked.connect(self.on_clear_selection)
         toolbar.addWidget(self.btn_clear)
 
@@ -278,8 +291,15 @@ class MainWindow(QMainWindow):
 
         # Add root items
         self.tree_movies = QTreeWidgetItem(self.tree, ["Movies"])
-        self.tree_tv = QTreeWidgetItem(self.tree, ["TV Shows"])
+        self.tree_movies.setIcon(
+            0, self.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon)
+        )
+        self.tree_shows = QTreeWidgetItem(self.tree, ["Shows"])
+        self.tree_shows.setIcon(0, self.style().standardIcon(QStyle.StandardPixmap.SP_DriveNetIcon))
         self.tree_unknown = QTreeWidgetItem(self.tree, ["Unknown"])
+        self.tree_unknown.setIcon(
+            0, self.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxQuestion)
+        )
 
         self.tree.expandAll()
         main_splitter.addWidget(self.tree)
@@ -318,60 +338,13 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Ready")
 
         # Add seed data
-        self.add_seed_data()
+        # self.add_seed_data()
 
-    def add_seed_data(self) -> None:
-        """Add seed data for UI testing."""
-        seed_items = [
-            {
-                "item": type(
-                    "MediaItem",
-                    (),
-                    {
-                        "kind": "episode",
-                        "title": "The Office",
-                        "season": 2,
-                        "episodes": [1],
-                        "source_path": "/source/The Office S02E01.mkv",
-                    },
-                )(),
-                "score": type("Score", (), {"confidence": 90, "reasons": []})(),
-                "destination": "/media/tv/The Office/Season 02/The Office - S02E01.mkv",
-            },
-            {
-                "item": type(
-                    "MediaItem",
-                    (),
-                    {
-                        "kind": "movie",
-                        "title": "The Matrix",
-                        "year": 1999,
-                        "source_path": "/source/The Matrix (1999).mkv",
-                    },
-                )(),
-                "score": type("Score", (), {"confidence": 85, "reasons": []})(),
-                "destination": "/media/movies/The Matrix (1999)/The Matrix (1999).mkv",
-            },
-            {
-                "item": type(
-                    "MediaItem",
-                    (),
-                    {
-                        "kind": "episode",
-                        "title": "Breaking Bad",
-                        "season": 1,
-                        "episodes": [1],
-                        "source_path": "/source/Breaking Bad S01E01.mkv",
-                    },
-                )(),
-                "score": type("Score", (), {"confidence": 55, "reasons": []})(),
-                "destination": "/media/tv/Breaking Bad/Season 01/Breaking Bad - S01E01.mkv",
-            },
-        ]
-
-        self.items = seed_items
-        self.populate_table(seed_items)
-        self.activity_log.append("Loaded 3 seed items")
+    def log_activity(self, message: str) -> None:
+        """Log a message to the activity log, prepending at the top."""
+        cursor = self.activity_log.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.Start)
+        cursor.insertText(message + "\n")
 
     def populate_table(self, items: list) -> None:
         """Populate table with items."""
@@ -423,18 +396,38 @@ class MainWindow(QMainWindow):
             dest_item = QTableWidgetItem(dest)
             self.table.setItem(row, 4, dest_item)
 
+    def update_tree(self) -> None:
+        """Update tree with discovered movies and shows."""
+        # Clear children
+        self.tree_movies.takeChildren()
+        self.tree_shows.takeChildren()
+        self.tree_unknown.takeChildren()
+        self.movie_nodes.clear()
+        self.show_nodes.clear()
+
+        for result in self.items:
+            item = result["item"]
+            if item.kind == "movie":
+                title = item.title or "Unknown Movie"
+                if title not in self.movie_nodes:
+                    node = QTreeWidgetItem(self.tree_movies, [title])
+                    self.movie_nodes[title] = node
+            elif item.kind == "episode":
+                title = item.title or "Unknown Show"
+                if title not in self.show_nodes:
+                    node = QTreeWidgetItem(self.tree_shows, [title])
+                    self.show_nodes[title] = node
+
     @Slot()
     def on_scan(self) -> None:
         """Handle scan button click."""
         source = self.config.paths.source
         if not source:
-            self.activity_log.append(
-                "No source path configured. Open Settings to set Source Folder."
-            )
+            self.log_activity("No source path configured. Open Settings to set Source Folder.")
             self.statusBar().showMessage("No source path configured")
             return
 
-        self.activity_log.append(f"Starting scan: {source}")
+        self.log_activity(f"Starting scan: {source}")
         self.statusBar().showMessage("Scanning...")
         self.btn_scan.setEnabled(False)
 
@@ -452,14 +445,15 @@ class MainWindow(QMainWindow):
     @Slot(str)
     def on_scan_progress(self, message: str) -> None:
         """Receive progress updates from scan worker."""
-        self.activity_log.append(message)
+        self.log_activity(message)
 
     @Slot(list)
     def on_scan_finished(self, items: list) -> None:
         """Handle scan completion and populate table."""
         self.items = items
         self.populate_table(items)
-        self.activity_log.append(f"Scan completed - {len(items)} items")
+        self.update_tree()
+        self.log_activity(f"Scan completed - {len(items)} items")
         self.statusBar().showMessage("Scan completed")
         self.btn_scan.setEnabled(True)
 
@@ -479,7 +473,7 @@ class MainWindow(QMainWindow):
         """Move selected items (respects dry-run setting)."""
         rows = self._get_selected_rows()
         if not rows:
-            self.activity_log.append("No items selected to move")
+            self.log_activity("No items selected to move")
             self.statusBar().showMessage("No items selected")
             return
 
@@ -601,7 +595,7 @@ class MainWindow(QMainWindow):
                         check_item.setCheckState(Qt.CheckState.Checked)
                         count += 1
 
-        self.activity_log.append(f"Selected {count} items with green confidence (>=70%)")
+        self.log_activity(f"Selected {count} items with green confidence (>=70%)")
         self.statusBar().showMessage(f"Selected {count} green items")
 
     @Slot()
@@ -612,12 +606,12 @@ class MainWindow(QMainWindow):
             if check_item:
                 check_item.setCheckState(Qt.CheckState.Unchecked)
 
-        self.activity_log.append("Cleared all selections")
+        self.log_activity("Cleared all selections")
         self.statusBar().showMessage("Selections cleared")
 
     def on_filter(self, filter_type: str) -> None:
         """Filter table by confidence level."""
-        self.activity_log.append(f"Filtering: {filter_type}")
+        self.log_activity(f"Filtering: {filter_type}")
 
         # Show all items first
         for row in range(self.table.rowCount()):
@@ -652,27 +646,54 @@ class MainWindow(QMainWindow):
         if not selected:
             return
 
-        item_text = selected[0].text(0)
-        self.activity_log.append(f"Tree selection: {item_text}")
+        item = selected[0]
+        item_text = item.text(0)
+        self.log_activity(f"Tree selection: {item_text}")
 
-        # Filter table based on tree selection
-        for row in range(self.table.rowCount()):
-            type_item = self.table.item(row, 1)
-            if type_item:
-                item_type = type_item.text()
-
-                hide = False
-                if (
-                    item_text == "Movies"
-                    and item_type != "MOVIE"
-                    or item_text == "TV Shows"
-                    and item_type != "EPISODE"
-                    or item_text == "Unknown"
-                    and item_type != "UNKNOWN"
-                ):
-                    hide = True
-
-                self.table.setRowHidden(row, hide)
+        # Check if it's a top level
+        if item.parent() is None:
+            # Top level
+            if item == self.tree_movies:
+                filter_type = "movie"
+            elif item == self.tree_shows:
+                filter_type = "episode"
+            else:
+                filter_type = "unknown"
+            # Filter by type
+            for row in range(self.table.rowCount()):
+                type_item = self.table.item(row, 1)
+                if type_item:
+                    item_type = type_item.text()
+                    hide = (
+                        (filter_type == "movie" and item_type != "MOVIE")
+                        or (filter_type == "episode" and item_type != "EPISODE")
+                        or (filter_type == "unknown" and item_type != "UNKNOWN")
+                    )
+                    self.table.setRowHidden(row, hide)
+        else:
+            # Child node
+            parent = item.parent()
+            if parent == self.tree_movies:
+                # Filter by movie title
+                selected_title = item.text(0)
+                for row in range(self.table.rowCount()):
+                    type_item = self.table.item(row, 1)
+                    name_item = self.table.item(row, 2)
+                    if type_item and name_item:
+                        item_type = type_item.text()
+                        item_name = name_item.text()
+                        hide = item_type != "MOVIE" or not item_name.startswith(selected_title)
+                        self.table.setRowHidden(row, hide)
+            elif parent == self.tree_shows:
+                selected_title = item.text(0)
+                for row in range(self.table.rowCount()):
+                    type_item = self.table.item(row, 1)
+                    name_item = self.table.item(row, 2)
+                    if type_item and name_item:
+                        item_type = type_item.text()
+                        item_name = name_item.text()
+                        hide = item_type != "EPISODE" or not item_name.startswith(selected_title)
+                        self.table.setRowHidden(row, hide)
 
     @Slot()
     def on_settings(self) -> None:
@@ -699,7 +720,7 @@ class MainWindow(QMainWindow):
                         self.config.providers.tvdb_language,
                     )
 
-            self.activity_log.append("Settings saved")
+            self.log_activity("Settings saved")
             self.statusBar().showMessage("Settings updated")
 
     @Slot()
@@ -710,53 +731,80 @@ class MainWindow(QMainWindow):
             return
 
         menu = QMenu(self)
-        discover_action = menu.addAction("Discover Metadata...")
-
-        # Disable if providers not enabled
-        if not self.config.identification.use_online_providers:
-            discover_action.setEnabled(False)
-            discover_action.setToolTip("Enable online providers in Settings to use this feature")
+        identify_action = menu.addAction("Identify...")
 
         action = menu.exec(self.tree.viewport().mapToGlobal(position))
 
-        if action == discover_action and self.config.identification.use_online_providers:
-            self.on_discover(item)
+        if action == identify_action:
+            self.on_identify(item)
 
-    def on_discover(self, tree_item: QTreeWidgetItem) -> None:
-        """Handle discover metadata action using a background worker."""
-        scope = tree_item.text(0)
-        if scope == "Movies":
-            target_items = [r for r in self.items if getattr(r.get("item"), "kind", "") == "movie"]
-        elif scope == "TV Shows":
-            target_items = [
-                r for r in self.items if getattr(r.get("item"), "kind", "") == "episode"
-            ]
-        else:
-            target_items = list(self.items)
+    def on_identify(self, tree_item: QTreeWidgetItem) -> None:
+        """Handle identify action using manual dialog."""
+        # Determine initial values from tree item
+        initial_title = ""
+        initial_type = "movie"
 
-        if not target_items:
-            self.activity_log.append("No items available for discovery in this scope")
-            return
+        if tree_item.parent() == self.tree_movies:
+            initial_type = "movie"
+            initial_title = tree_item.text(0)
+        elif tree_item.parent() == self.tree_shows:
+            initial_type = "episode"
+            initial_title = tree_item.text(0)
+        # For top-level items, use defaults
 
-        self.activity_log.append(f"Discovering metadata for {len(target_items)} items...")
-        self.statusBar().showMessage("Discovering metadata...")
+        dialog = IdentifyDialog(self.provider_manager, initial_title, initial_type, self)
+        if dialog.exec():
+            result = dialog.get_result()
+            if result:
+                # Update matching items
+                target_title = initial_title or result.get("title", "")
+                target_type = initial_type
 
-        worker = DiscoverWorker(target_items, self.provider_manager)
-        worker.signals.progress.connect(self.on_scan_progress)
+                for item_dict in self.items:
+                    item = item_dict["item"]
+                    if item.title == target_title and (
+                        (target_type == "movie" and item.kind == "movie")
+                        or (target_type == "episode" and item.kind == "episode")
+                    ):
+                        # Update from result
+                        if "id" in result:  # From provider
+                            item.nfo = item.nfo or {}
+                            item.nfo["tmdbid"] = str(result["id"])
+                            item.title = result.get("title", result.get("name", item.title))
+                            date = result.get("release_date", result.get("first_air_date", ""))
+                            if date:
+                                item.year = int(date[:4])
+                        else:  # Manual
+                            item.title = result.get("title", item.title)
+                            if result.get("year"):
+                                with contextlib.suppress(ValueError):
+                                    item.year = int(result["year"])
+                            if result.get("season") and item.kind == "episode":
+                                with contextlib.suppress(ValueError):
+                                    item.season = int(result["season"])
+                            if result.get("episode") and item.kind == "episode":
+                                with contextlib.suppress(ValueError):
+                                    item.episodes = [int(result["episode"])]
 
-        def on_finished(updated: list) -> None:
-            # Update self.items in place by matching source_path
-            by_src = {r["item"].source_path: r for r in updated}
-            for i, r in enumerate(self.items):
-                src = r["item"].source_path
-                if src in by_src:
-                    self.items[i] = by_src[src]
-            self.populate_table(self.items)
-            self.activity_log.append("Discover complete")
-            self.statusBar().showMessage("Discover complete")
+                        # Re-score
+                        from rosey.models import IdentificationResult
 
-        worker.signals.finished.connect(on_finished)
-        self._thread_pool.start(worker)
+                        ident = IdentificationResult(item=item, reasons=["Manual identification"])
+                        new_score = score_identification(ident)
+                        item_dict["score"] = new_score
+
+                        # Re-plan destination
+                        new_dest = plan_path(
+                            item,
+                            movies_root=self.config.paths.movies,
+                            tv_root=self.config.paths.tv,
+                        )
+                        item_dict["destination"] = new_dest
+
+                # Update UI
+                self.populate_table(self.items)
+                self.update_tree()
+                self.log_activity("Manual identification completed")
 
 
 def main() -> int:
