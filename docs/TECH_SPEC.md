@@ -78,9 +78,25 @@ class Candidate:
     reasons: List[str]
     destination: str
     season: Optional[int] = None
-    episode: Optional[int] = None
+  episode: Optional[int] = None
+  episodes: Optional[List[int]] = None      # for ranges like E01-E02
     episode_title: Optional[str] = None
     online_match: Optional[ProviderMatch] = None
+  part_number: Optional[int] = None         # multipart episodes
+  part_total: Optional[int] = None
+  is_special: bool = False                  # Season 00
+  is_sidecar: bool = False                  # companion (srt, nfo, artwork)
+  sidecar_of: Optional[str] = None          # key/id of parent media
+  file_size_bytes: Optional[int] = None
+
+  # Derived (not persisted): convenience label for filtering
+  @property
+  def confidence_label(self) -> str:
+    if self.confidence >= 70:
+      return "green"
+    if self.confidence >= 40:
+      return "yellow"
+    return "red"
 ```
 
 ## 5) Engine essentials
@@ -95,6 +111,7 @@ class Candidate:
 - Regex: `S(?P<s>\d{1,2})E(?P<e>\d{1,3})`, `(?P<s>\d{1,2})x(?P<e>\d{1,3})`, `\d{4}-\d{2}-\d{2}`.
 - Folder: `Title (Year)`, `Show/Season NN`.
 - Parse `.nfo` via `xml.etree.ElementTree`, tolerant to whitespace/encoding.
+  - Extract IDs when present: `imdbid`, `tmdbid`, `tvdbid`; normalize formats (e.g., `tt1234567`).
 
 ### Online lookups
 - **httpx.Client** with limits; semaphore for rate limit; retries with exponential backoff on 429/5xx.
@@ -108,7 +125,12 @@ class Candidate:
 
 ### Planner
 - Build destination paths per Jellyfin rules; **preserve extension**.
+- TV multi-episode: `Show - S01E01-E02 - Title.ext`.
+- TV multipart same-episode: `Show - S02E03 Part 1.ext`, `Part 2.ext`.
+- Specials: use `Season 00`.
+- Extras capitalization: `Extras` (folder name).
 - Sanitize invalid characters: `<>:"/\|?*` and trailing spaces/dots; collapse spaces.
+- Windows reserved names: reject/rename `CON, PRN, AUX, NUL, COM1-9, LPT1-9` (with suffix strategy).
 
 ### Mover
 - **Transactional moves:** For multi-file operations (e.g., a TV season), treat the move as a single transaction. If any file fails to copy, abort the operation and delete any partially copied files from the destination to ensure a clean rollback. Only delete source files after all copies are verified.
@@ -117,6 +139,9 @@ class Candidate:
 - **Cross volume:** stream copy (`shutil.copy2`) then `os.remove()`; report bytes for progress.
 - Bounded concurrency; cancellation token checks between files.
 - Conflict policy: Skip / Replace / Keep Both (`name (1).ext`).
+- Preflight: ensure destination free space ≥ planned copy bytes + buffer; path-length and permission checks; emit `preflightFailed` if not satisfied.
+- Same-volume detection: compare `os.stat(src).st_dev` vs `os.stat(dst_parent).st_dev`.
+- Rollback order: delete partially copied dest files; leave source intact unless verification passed.
 
 ## 6) Config & Logging
 ### Config (`rosey.json`)
@@ -154,6 +179,8 @@ class Candidate:
 - **Unit:** regex parsing, NFO parsing, sanitization, planner.
 - **Integration:** temp trees → plan; move dry‑run; conflict handling.
 - **Parity (optional):** golden JSONs from C# engine and pytest comparisons.
+- **Property-based:** filename/regex and planner with Hypothesis.
+- **Performance:** synthetic trees (e.g., 50k files) to validate UI responsiveness and scan throughput.
 
 ## 9) Packaging
 - PyInstaller single‑folder bundles with icons (ICO/PNG).
@@ -166,3 +193,18 @@ class Candidate:
 ## 11) Accessibility & i18n
 - Keyboard navigation for all actions; tab order; tooltips.
 - Strings collected for translation; configurable UI language in future.
+ - Maintain color contrast ratio ≥ 4.5:1 for text in both themes.
+
+## 12) Filtering
+- Implement confidence filters (All/Green/Yellow/Red) via `QSortFilterProxyModel` using `Candidate.confidence_label`.
+- Tree selection scopes grid to selected show/season/movie.
+
+## 13) Events & Commands (additions)
+- `moveRequested(selectedItems)` (alias for legacy `runRequested`).
+- `filterChanged({confidence})` where `confidence ∈ all|green|yellow|red`.
+- `conflictResolutionChosen(strategy)` where `strategy ∈ skip|replace|keepBoth`.
+- `preflightFailed(reason, details)`.
+- Commands: `openInFileManager(path)`, `revealDestination(path)`.
+
+## 14) Providers
+- httpx limits: e.g., max 4 RPS per provider; on 429/5xx use exponential backoff with jitter; respect language/region; cache per (kind,key).

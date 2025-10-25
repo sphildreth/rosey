@@ -34,7 +34,7 @@ Privacy‑first: no telemetry; provider calls only when enabled.
 - Jellyfin naming defaults:
   - Movie: `Movies/Title (Year) [ExternalId]/Title (Year).ext`
   - TV: `Shows/Show Title (Year) [ExternalId]/Season 01/Show Title - S01E02 - Episode Title.ext`
-  - Specials/Extras/Bonus → `extras`.
+  - Specials/Extras/Bonus → `Extras`.
 - Conflict dialog (Skip / Replace / Keep Both); "Keep Both" appends a numeric suffix, e.g., `(1)`.
 - Config saved to `rosey.json` (paths, provider keys, theme, concurrency, cache TTL).
 - Logging to file (rotating) and on‑screen status pane.
@@ -48,19 +48,36 @@ Privacy‑first: no telemetry; provider calls only when enabled.
 
 ## 5) UX requirements
 - See [UI_MOCKUPS](./mockups/UI_MOCKUPS.md)
+  - Toolbar provides confidence filters: All, Green, Yellow, Red.
+  - Selecting a node in the Library Tree scopes the grid to that show/season or movies group.
 
 ## 6) Functional requirements
 - **FR‑1 Scan:** recursively enumerate **Source** with concurrency tuned for local vs network shares.
+  - AC: Scanning 50k files completes without UI freeze; permission errors appear in the log and do not crash the app.
 - **FR‑2 Identify (offline):** classify Movie/TV/Unknown from `.nfo`, folders, and filenames, including multi-episode (`S01E01-E02`) and multi-part (`Part 1`) patterns.
+  - AC: At least the listed patterns are parsed into season/episode(s)/part; malformed files fall back to Unknown with a clear reason.
 - **FR‑3 Online Lookups (opt‑in):** TMDB/TVDB with local cache and rate limit; localization (language/region).
+  - AC: When enabled, provider requests respect rate limits; failures degrade gracefully and are logged.
 - **FR‑4 Score:** 0–100 with explicit reasons (e.g., "Matched filename", "Found ID in .nfo"); thresholds: Green ≥70, Yellow 40–69, Red <40.
+  - AC: "Select All Green" checks only items with confidence ≥70; Yellow remain unchecked; Red never auto-selected.
 - **FR‑5 Plan:** compute sanitized destination paths following Jellyfin rules, including for multi-episode/part files; preserve extension.
+  - AC: Destination paths are valid on Windows/Linux; reserved names and invalid characters are sanitized consistently.
+  - Multi-episode naming: `Show Title - S01E01-E02 - Episode Title.ext`.
+  - Multipart naming (same episode): `Show Title - S02E03 Part 1.ext`, `... Part 2.ext`.
+  - Specials: use `Season 00`.
 - **FR‑6 Present:** show candidates; allow selection helpers; filter and sort.
+  - AC: Confidence filter buttons (All/Green/Yellow/Red) modify the grid; Unknown items are visible but excluded from plan by default.
 - **FR‑7 Move:** execute file operations with robust error handling and progress updates. On same volume, use atomic renames. Across volumes, use a safe copy-verify-quarantine process (copy, verify size, then move original to a temporary folder). Moves should be transactional; if any part of a multi-file operation fails, the system will attempt to roll back any changes made in that operation to leave the destination clean.
 - **FR-7.1 Move Sidecar Files:** When a media file is moved, all associated sidecar files (e.g., `.srt`, `.nfo`, `.jpg`) sharing the same base filename are also moved.
+  - Preflight checks: verify free space on destination (≥ size of files to copy + small buffer), check path length and permissions; surface actionable errors.
 - **FR‑8 Config & Logging:** load/save `rosey.json`; rotate logs; redact secrets in logs.
 - **FR‑9 Theming:** global light/dark toggle; remember user’s last theme.
 - **FR‑10 Dry Run:** Preview mode available in config and as a command-line flag; simulates moves without file operations, logging planned actions.
+
+### Supported formats & sidecars
+- Video: mkv, mp4, mov, avi, ts (extensible).
+- Subtitles/sidecars: srt, ass, vtt, nfo, jpg, png (moved with matching base filename).
+- Unknowns: files not matching supported media or patterns are shown as Unknown and excluded by default.
 
 ## 7) Non‑functional requirements
 - **Platforms:** Windows 10/11 x64; modern Linux x64.
@@ -125,3 +142,9 @@ Movies
 #### References
 - [Jellyfin Shows Documentation](https://jellyfin.org/docs/general/server/media/shows/)
 - [Jellyfin Movies Documentation](https://jellyfin.org/docs/general/server/media/movies)
+
+### Glossary
+- Green/Yellow/Red: Confidence buckets derived from score thresholds (≥70, 40–69, <40).
+- Sidecar: Non-video companion file sharing the same base filename (e.g., `.srt`, `.nfo`, artwork).
+- Transactional move: Grouped file operation that rolls back partial copies on failure.
+- Cross-volume: Source and destination are on different volumes; requires copy/verify/remove instead of atomic rename.
