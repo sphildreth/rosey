@@ -12,7 +12,7 @@ This guide translates the PRD into an agent-driven implementation plan. It defin
 - [x] [Phase A — Planning & Guardrails](#phase-a)
 - [x] [Phase B — M1: Scan + Identify (offline) + Score + Plan + CLI + Minimal UI](#phase-b)
 - [x] [Phase C — M2: Move Engine + Conflicts + Sidecars + Logging + Progress/Cancel](#phase-c)
-- [ ] [Phase D — M3: Online Lookups (TMDB/TVDB) + Cache + Settings UI](#phase-d)
+- [x] [Phase D — M3: Online Lookups (TMDB/TVDB) + Cache + Settings UI](#phase-d)
 - [ ] [Phase E — M4: Packaging (Win/Linux) + Icons + Docs + First Binaries](#phase-e)
 - [ ] [Continuous — Tests & Docs + Observability + Perf/Stress + Cross-Platform CI](#continuous)
 
@@ -261,11 +261,11 @@ class MoveResult(BaseModel):
 <a id="phase-d"></a>
 ### Phase D — M3: Online Lookups + Cache + Settings UI
 
-- [ ] TMDB primary + TVDB optional; localization (language/region).
-- [ ] Disk-backed cache and rate limiting with backoff.
-- [ ] Settings UI for API keys, cache TTL, concurrency, language/region, dry-run.
-- [ ] Recorded-fixture tests; live calls opt-in with budget; graceful degradation.
-- [ ] Library Tree context menu: Discover action — runs in background thread; respects rate limit/cache; shows non-blocking status; disabled when providers are off; errors logged.
+- [x] TMDB primary + TVDB optional; localization (language/region).
+- [x] Disk-backed cache and rate limiting with backoff.
+- [x] Settings UI for API keys, cache TTL, concurrency, language/region, dry-run.
+- [x] Recorded-fixture tests; live calls opt-in with budget; graceful degradation.
+- [x] Library Tree context menu: Discover action — runs in background thread; respects rate limit/cache; shows non-blocking status; disabled when providers are off; errors logged.
 
 <a id="phase-e"></a>
 ### Phase E — M4: Packaging + Icons + Docs + Binaries

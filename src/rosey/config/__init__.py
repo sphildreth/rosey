@@ -55,6 +55,17 @@ class ScanningConfig(BaseModel):
     follow_symlinks: bool = False
 
 
+class ProvidersConfig(BaseModel):
+    """Online providers configuration."""
+
+    tmdb_api_key: str = ""
+    tmdb_language: str = "en-US"
+    tmdb_region: str = "US"
+    tvdb_api_key: str = ""
+    tvdb_language: str = "eng"
+    cache_ttl_days: int = 30
+
+
 class IdentificationConfig(BaseModel):
     """Identification configuration."""
 
@@ -85,6 +96,7 @@ class RoseyConfig(BaseModel):
     behavior: BehaviorConfig = Field(default_factory=BehaviorConfig)
     scanning: ScanningConfig = Field(default_factory=ScanningConfig)
     identification: IdentificationConfig = Field(default_factory=IdentificationConfig)
+    providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
 
 

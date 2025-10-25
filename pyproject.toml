@@ -3,7 +3,7 @@ name = "rosey"
 version = "0.1.0"
 description = "A cross-platform media organizer for Jellyfin"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 license = {text = "MIT"}
 authors = [
     {name = "Rosey Contributors"}
@@ -50,7 +50,7 @@ markers = [
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
 src = ["src", "tests"]
 
 [tool.ruff.lint]
@@ -74,11 +74,11 @@ ignore = [
 
 [tool.black]
 line-length = 100
-target-version = ["py311"]
+target-version = ["py312"]
 include = '\.pyi?$'
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.13"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true

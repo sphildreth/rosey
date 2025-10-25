@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QMainWindow,
+    QMenu,
     QPushButton,
     QSplitter,
     QTableWidget,
@@ -18,10 +19,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from rosey.config import get_config_path, load_config, save_config
 from rosey.identifier import identify_file
 from rosey.planner import plan_path
+from rosey.providers import ProviderManager
 from rosey.scanner import scan_directory
 from rosey.scorer import score_identification
+from rosey.ui.settings_dialog import SettingsDialog
 
 
 class ScanWorker(QRunnable):
@@ -83,7 +87,38 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.items: list[dict] = []
+
+        # Load configuration
+        self.config = load_config()
+
+        # Initialize provider manager
+        cache_dir = get_config_path().parent / "cache"
+        self.provider_manager = ProviderManager(
+            cache_dir=cache_dir,
+            cache_ttl_days=self.config.providers.cache_ttl_days,
+            enabled=self.config.identification.use_online_providers,
+        )
+
+        # Configure providers if enabled
+        if self.config.identification.use_online_providers:
+            if self.config.providers.tmdb_api_key:
+                self.provider_manager.configure_tmdb(
+                    self.config.providers.tmdb_api_key,
+                    self.config.providers.tmdb_language,
+                    self.config.providers.tmdb_region,
+                )
+            if self.config.providers.tvdb_api_key:
+                self.provider_manager.configure_tvdb(
+                    self.config.providers.tvdb_api_key,
+                    self.config.providers.tvdb_language,
+                )
+
         self.init_ui()
+
+    def closeEvent(self, event) -> None:  # type: ignore[no-untyped-def]  # noqa: N802
+        """Handle window close event."""
+        self.provider_manager.close()
+        event.accept()
 
     def init_ui(self) -> None:
         """Initialize the UI."""
@@ -103,6 +138,10 @@ class MainWindow(QMainWindow):
         self.btn_scan = QPushButton("Scan")
         self.btn_scan.clicked.connect(self.on_scan)
         toolbar.addWidget(self.btn_scan)
+
+        self.btn_settings = QPushButton("Settings")
+        self.btn_settings.clicked.connect(self.on_settings)
+        toolbar.addWidget(self.btn_settings)
 
         self.btn_select_green = QPushButton("Select All Green")
         self.btn_select_green.clicked.connect(self.on_select_green)
@@ -139,6 +178,8 @@ class MainWindow(QMainWindow):
         self.tree = QTreeWidget()
         self.tree.setHeaderLabel("Media Type")
         self.tree.itemSelectionChanged.connect(self.on_tree_selection)
+        self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self.on_tree_context_menu)
 
         # Add root items
         self.tree_movies = QTreeWidgetItem(self.tree, ["Movies"])
@@ -382,6 +423,76 @@ class MainWindow(QMainWindow):
                     hide = True
 
                 self.table.setRowHidden(row, hide)
+
+    @Slot()
+    def on_settings(self) -> None:
+        """Handle settings button click."""
+        dialog = SettingsDialog(self.config, self)
+        if dialog.exec():
+            # Save updated config
+            self.config = dialog.get_config()
+            save_config(self.config)
+
+            # Update provider manager
+            self.provider_manager.enabled = self.config.identification.use_online_providers
+
+            if self.config.identification.use_online_providers:
+                if self.config.providers.tmdb_api_key:
+                    self.provider_manager.configure_tmdb(
+                        self.config.providers.tmdb_api_key,
+                        self.config.providers.tmdb_language,
+                        self.config.providers.tmdb_region,
+                    )
+                if self.config.providers.tvdb_api_key:
+                    self.provider_manager.configure_tvdb(
+                        self.config.providers.tvdb_api_key,
+                        self.config.providers.tvdb_language,
+                    )
+
+            self.activity_log.append("Settings saved")
+            self.statusBar().showMessage("Settings updated")
+
+    @Slot()
+    def on_tree_context_menu(self, position) -> None:  # type: ignore[no-untyped-def]
+        """Handle tree context menu request."""
+        item = self.tree.itemAt(position)
+        if not item:
+            return
+
+        menu = QMenu(self)
+        discover_action = menu.addAction("Discover Metadata...")
+
+        # Disable if providers not enabled
+        if not self.config.identification.use_online_providers:
+            discover_action.setEnabled(False)
+            discover_action.setToolTip("Enable online providers in Settings to use this feature")
+
+        action = menu.exec(self.tree.viewport().mapToGlobal(position))
+
+        if action == discover_action and self.config.identification.use_online_providers:
+            self.on_discover(item)
+
+    def on_discover(self, tree_item: QTreeWidgetItem) -> None:
+        """Handle discover metadata action.
+
+        Args:
+            tree_item: Selected tree item
+        """
+        item_text = tree_item.text(0)
+        self.activity_log.append(f"Discovering metadata for: {item_text}")
+        self.statusBar().showMessage(f"Discovering metadata for {item_text}...")
+
+        # In a real implementation, this would run in a background thread
+        # For now, we'll just show a placeholder message
+
+        # TODO: Implement background discovery task that:
+        # 1. Finds all items in the selected tree node
+        # 2. Queries provider_manager for each item
+        # 3. Updates scores and metadata
+        # 4. Refreshes the table
+
+        self.activity_log.append("Discover: Feature stub - provider calls would happen here")
+        self.statusBar().showMessage("Ready")
 
 
 def main() -> int:
