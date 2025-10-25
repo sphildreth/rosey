@@ -83,12 +83,43 @@
       "dest": "(companion)",
       "source": "...",
       "reasons": []
+    },
+    {
+      "key": "unknown:random_file",
+      "checked": false,
+      "type": "Unknown",
+      "name": "random_video.mp4",
+      "season": null,
+      "episode": null,
+      "confidence": 10,
+      "dest": "Unknown/random_video.mp4",
+      "source": "...",
+      "reasons": [
+        "No patterns matched"
+      ]
+    },
+    {
+      "key": "conflict:movie_duplicate",
+      "checked": false,
+      "type": "Movie",
+      "name": "Inception (2010) - Duplicate",
+      "season": null,
+      "episode": null,
+      "confidence": 85,
+      "dest": "Movies/Inception (2010)/Inception (2010).mkv (exists)",
+      "source": "...",
+      "reasons": [
+        "Folder Title (Year)",
+        "Conflict detected"
+      ]
     }
   ],
   "log": [
     "[12:03:11] Scan started at C:\\\\Downloads\\\\Unsorted",
     "[12:03:12] Found TV: The Office \u2014 S02E01 \u2014 The Dundies (90)",
     "[12:03:13] Planned: TV/The Office/Season 02/The Office - S02E01 - The Dundies.mkv",
-    "[12:03:15] Move: source \u2192 dest (734 MB, 3.2 s)"
+    "[12:03:15] Move: source \u2192 dest (734 MB, 3.2 s)",
+    "[12:05:00] Error: Permission denied on /mnt/network/share",
+    "[12:10:20] Move: Network disconnected, retrying..."
   ]
 }

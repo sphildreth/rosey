@@ -15,29 +15,34 @@ Version: 1.0 • Date: 2025-10-25
 ## 2) Architecture
 ```
 src/
-  app.py            # Qt bootstrap, theme setup
-  ui_main.py        # MainWindow: controls, table view, toolbar/status
-  viewmodels.py     # QAbstractTableModel for candidates
-  tasks/
-    scan_task.py    # QRunnable: scan + offline identify
-    move_task.py    # QRunnable: plan application (move/copy+delete)
-    lookup_task.py  # QRunnable: online provider enrichment
-  engine/
-    scanner.py      # enumerate FS, detect network share vs local
-    nfo.py          # parse .nfo
-    patterns.py     # filename/folder regexes
-    identify.py     # Movie/TV/Unknown classification
-    providers/
-      tmdb.py       # TMDB adapter, cache, rate limit
-      tvdb.py       # optional TVDB adapter
-    score.py        # confidence + reasons
-    planner.py      # Jellyfin naming, sanitize
-    mover.py        # atomic rename or copy+delete + progress + cancel
-    config.py       # pydantic settings, load/save
-    utils.py        # path, long‑path helpers, throttling
-  assets/           # icons, qss
-tests/              # pytest: unit + parity
+├── app.py              # Qt bootstrap, theme setup, main entry
+├── ui_main.py          # MainWindow: controls, table/tree views, toolbar/status
+├── viewmodels.py       # QAbstractTableModel/QStandardItemModel for tree/grid
+├── tasks/
+│   ├── scan_task.py    # QRunnable: scan + offline identify
+│   ├── move_task.py    # QRunnable: plan application (move/copy+delete)
+│   └── lookup_task.py  # QRunnable: online provider enrichment
+├── engine/
+│   ├── scanner.py      # enumerate FS, detect network share vs local
+│   ├── nfo.py          # parse .nfo
+│   ├── patterns.py     # filename/folder regexes
+│   ├── identify.py     # Movie/TV/Unknown classification
+│   ├── providers/
+│   │   ├── tmdb.py     # TMDB adapter, cache, rate limit
+│   │   └── tvdb.py     # optional TVDB adapter
+│   ├── score.py        # confidence + reasons
+│   ├── planner.py      # Jellyfin naming, sanitize
+│   ├── mover.py        # atomic rename or copy+delete + progress + cancel
+│   ├── config.py       # pydantic settings, load/save
+│   └── utils.py        # path, long‑path helpers, throttling
+├── assets/             # icons, qss (light.qss, dark.qss)
+└── tests/              # pytest: unit + integration
 ```
+
+### UI Error States
+- **Scan Errors:** If scan fails (e.g., permission denied), show red error badge in status bar; append error to activity log; disable move buttons.
+- **Move Errors:** On failure, pause progress, show rollback message in log; highlight failed rows in grid (red background); offer retry/cancel.
+- **Network Issues:** For disconnections, show "Retrying..." in status bar; exponential backoff; notify on final failure.
 
 ## 3) UI behavior
 - Build the grid using `QAbstractTableModel` with roles for text + checkbox state.

@@ -60,11 +60,12 @@ Privacy‑first: no telemetry; provider calls only when enabled.
 - **FR-7.1 Move Sidecar Files:** When a media file is moved, all associated sidecar files (e.g., `.srt`, `.nfo`, `.jpg`) sharing the same base filename are also moved.
 - **FR‑8 Config & Logging:** load/save `rosey.json`; rotate logs; redact secrets in logs.
 - **FR‑9 Theming:** global light/dark toggle; remember user’s last theme.
+- **FR‑10 Dry Run:** Preview mode available in config and as a command-line flag; simulates moves without file operations, logging planned actions.
 
 ## 7) Non‑functional requirements
 - **Platforms:** Windows 10/11 x64; modern Linux x64.
 - **Performance:** UI thread never blocked; scan 50k files without UI stutter; moves respect bounded concurrency (local>network).
-- **Reliability:** retries on transient I/O; safe shutdown; no destructive operations without user action.
+- **Reliability:** retries on transient I/O; safe shutdown; no destructive operations without user action. For network shares, handle disconnections during moves by pausing and retrying with exponential backoff; notify user if retries fail.
 - **Packaging:** PyInstaller binaries for Win/Linux; ship icons for installers (ICO/PNG).
 
 ## 8) Risks & mitigations
