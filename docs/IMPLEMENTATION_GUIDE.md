@@ -46,7 +46,7 @@ Output: Code + tests + a brief summary of changes and how you verified them (com
 ## Agent Roles (inputs → outputs → definition of done)
 
 - Spec-to-Issues Agent
-  - Inputs: `docs/PRD.md`, `docs/TECH_SPEC.md`, mockups, repo state.
+  - Inputs: `PRD.md`, `TECH_SPEC.md`, mockups, repo state.
   - Outputs: structured issues/tasks per phase with acceptance criteria.
   - DoD: Issues reference PRD FRs and include testable AC and file write-scope.
 
