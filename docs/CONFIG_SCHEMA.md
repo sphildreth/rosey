@@ -170,7 +170,9 @@ File scanning configuration.
 File extensions to recognize.
 
 - **video**: Video file extensions to identify as media
-- **sidecar**: Sidecar file extensions to co-move with media
+- **companion (sidecar)**: File extensions for companion/sidecar files to co-move with media
+
+Note: The JSON schema key remains `sidecar` for backward compatibility (e.g., `"sidecar": [".srt", ...]`). In documentation we refer to these as companion files for clarity.
 
 ### identification
 Media identification settings.

@@ -75,15 +75,15 @@ Privacy‑first: no telemetry; provider calls only when enabled.
 - **FR‑6.1 Present – Context Menu (Discover, opt‑in):** Right‑click on Library Tree nodes (Shows/Movies/Show/Season) offers a Discover action that triggers online metadata lookups when providers are enabled.
   - AC: Runs in a background thread; respects rate limits and cache (FR‑3); shows non‑blocking status/progress; failures degrade gracefully (logged, user notified); does not perform any destructive operation. When providers are disabled, Discover is disabled or shows an explanatory tooltip.
 - **FR‑7 Move:** execute file operations with robust error handling and progress updates. On same volume, use atomic renames. Across volumes, use a safe copy-verify-quarantine process (copy, verify size, then move original to a temporary folder). Moves should be transactional; if any part of a multi-file operation fails, the system will attempt to roll back any changes made in that operation to leave the destination clean.
-- **FR-7.1 Move Sidecar Files:** When a media file is moved, all associated sidecar files (e.g., `.srt`, `.nfo`, `.jpg`) sharing the same base filename are also moved.
+- **FR-7.1 Move Companion Files (sidecars):** When a media file is moved, all associated companion/sidecar files (e.g., `.srt`, `.nfo`, `.jpg`) sharing the same base filename are also moved.
   - Preflight checks: verify free space on destination (≥ size of files to copy + small buffer), check path length and permissions; surface actionable errors.
 - **FR‑8 Config & Logging:** load/save `rosey.json`; rotate logs; redact secrets in logs.
 - **FR‑9 Theming:** global light/dark toggle; remember user’s last theme.
 - **FR‑10 Dry Run:** Preview mode available in config and as a command-line flag; simulates moves without file operations, logging planned actions.
 
-### Supported formats & sidecars
+### Supported formats & companions
 - Video: mkv, mp4, mov, avi, ts (extensible).
-- Subtitles/sidecars: srt, ass, vtt, nfo, jpg, png (moved with matching base filename).
+- Subtitles/companions: srt, ass, vtt, nfo, jpg, png (moved with matching base filename).
 - Unknowns: files not matching supported media or patterns are shown as Unknown and excluded by default.
 
 ## 7) Non‑functional requirements
@@ -153,6 +153,6 @@ Movies
 
 ### Glossary
 - Green/Yellow/Red: Confidence buckets derived from score thresholds (≥70, 40–69, <40).
-- Sidecar: Non-video companion file sharing the same base filename (e.g., `.srt`, `.nfo`, artwork).
+- Companion (sidecar): Non-video file sharing the same base filename as its primary video (e.g., `.srt`, `.nfo`, artwork).
 - Transactional move: Grouped file operation that rolls back partial copies on failure.
 - Cross-volume: Source and destination are on different volumes; requires copy/verify/remove instead of atomic rename.

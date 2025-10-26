@@ -97,7 +97,7 @@ Click on any item to see:
 - If satisfied, disable dry-run in Settings and run again
 - Rosey will:
   - Move files to correct Jellyfin structure
-  - Co-move sidecars (.srt, .nfo, artwork)
+  - Co-move companions (sidecars) (.srt, .nfo, artwork)
   - Handle conflicts (Skip/Replace/Keep Both)
   - Provide rollback on failures
 
