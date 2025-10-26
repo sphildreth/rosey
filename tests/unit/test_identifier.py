@@ -86,3 +86,43 @@ class TestIdentifierUnknown:
         """Test ambiguous filename."""
         result = identify_file("/path/to/abc.mkv")
         assert result.item is not None
+
+
+class TestEpisodeTitleExtraction:
+    """Test episode title extraction from filenames."""
+
+    def test_episode_title_with_dash(self):
+        """Test episode title extraction with dash separator."""
+        result = identify_file("/path/to/Show S01E01 - Pilot.mkv")
+        assert result.item.kind == "episode"
+        assert result.item.nfo.get("episode_title") == "Pilot"
+
+    def test_episode_title_with_parentheses(self):
+        """Test episode title extraction with parentheses."""
+        result = identify_file("/path/to/Rhoda S04E20 (Brenda and the Bank Girl).mkv")
+        assert result.item.kind == "episode"
+        # Note: Rhoda alone may not be recognized as a title
+        assert result.item.season == 4
+        assert result.item.episodes == [20]
+        assert result.item.nfo.get("episode_title") == "Brenda and the Bank Girl"
+
+    def test_episode_title_with_quality_tags(self):
+        """Test episode title extraction with quality tags that should be removed."""
+        result = identify_file("/path/to/Show S02E03 - Episode Name [1080p].mkv")
+        assert result.item.nfo.get("episode_title") == "Episode Name"
+
+    def test_episode_no_title(self):
+        """Test episode without a title."""
+        result = identify_file("/path/to/Show S01E05.mkv")
+        assert result.item.kind == "episode"
+        # episode_title should not be present or should be None
+        assert not result.item.nfo.get("episode_title")
+
+    def test_episode_title_nfo_precedence(self, temp_nfo_dir):
+        """Test that NFO episode title takes precedence over filename."""
+        video_file = temp_nfo_dir / "Episode.mkv"
+        video_file.write_text("fake video")
+
+        result = identify_file(str(video_file))
+        # NFO has episodetitle "The Dundies", should use that
+        assert result.item.nfo.get("episode_title") == "The Dundies"

@@ -278,3 +278,6 @@ source_path,kind,title,year,season,episodes,part,date,reason_contains
 "Show S99E999.mkv",episode,Show,,99,999,,,
 "Show - Invalid Date.mkv",movie,"Show Invalid Date",,,,,,,,
 "Show S01E01 [Extra Tags].mkv",episode,Show,,1,1,,,
+"Rhoda S04E20 (Brenda and the Bank Girl).mkv",episode,Rhoda,,4,20,,,
+"Space Ghost Coast To Coast/Season 3/Space Ghost Coast To Coast S03E12.mkv",episode,Space Ghost Coast To Coast,,3,12,,,
+"The Addams Family (1964) — 2x30 — Ophelia's Career.mkv",episode,The Addams Family,1964,2,30,,,

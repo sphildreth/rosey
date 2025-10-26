@@ -182,11 +182,16 @@ class Identifier:
         # Determine season and episodes
         season = None
         episodes = None
+        episode_title_from_filename = None
 
         if episode_info:
             season = episode_info.season
             episodes = episode_info.episodes
             reasons.append(f"Parsed episode: S{season:02d}E{episodes[0]:02d}")
+            # Save episode title if found in filename (will be added to nfo_dict later)
+            if episode_info.title:
+                episode_title_from_filename = episode_info.title
+                reasons.append(f"Episode title from filename: {episode_info.title}")
         elif nfo_data and nfo_data.season is not None:
             season = nfo_data.season
             if nfo_data.episode is not None:
@@ -227,6 +232,10 @@ class Identifier:
                 reasons.append("TVDB ID from NFO")
             if nfo_data.episode_title:
                 nfo_dict["episode_title"] = nfo_data.episode_title
+
+        # Add episode title from filename if we found one and NFO didn't have one
+        if episode_title_from_filename and not nfo_dict.get("episode_title"):
+            nfo_dict["episode_title"] = episode_title_from_filename
 
         # If title was derived from filename and includes a trailing parenthetical (often episode title),
         # strip it to keep just the show name. Apply conservatively when we have episode_info/date.

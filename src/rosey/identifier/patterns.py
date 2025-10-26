@@ -120,9 +120,58 @@ def extract_episode_info(filename: str) -> EpisodeMatch | None:
                 else:
                     episodes.append(ep2)
 
-            return EpisodeMatch(season=season, episodes=episodes)
+            # Extract episode title if present after the episode marker
+            episode_title = _extract_episode_title_from_match(filename, match.end())
+
+            return EpisodeMatch(season=season, episodes=episodes, title=episode_title)
 
     return None
+
+
+def _extract_episode_title_from_match(filename: str, after_pos: int) -> str | None:
+    """
+    Extract episode title from the part of filename after the episode marker.
+
+    Args:
+        filename: Full filename
+        after_pos: Position after the episode marker
+
+    Returns:
+        Episode title if found, None otherwise
+    """
+    # Get the part after the episode marker
+    remainder = filename[after_pos:].strip()
+
+    if not remainder:
+        return None
+
+    # Look for patterns: " - Title", " (Title)", or just "Title"
+    # Pattern 1: " - Episode Title" or "- Episode Title"
+    dash_match = re.match(r"^\s*[-\u2013]\s*(.+)$", remainder)
+    if dash_match:
+        title = dash_match.group(1).strip()
+    # Pattern 2: " (Episode Title)" or "(Episode Title)"
+    elif remainder.startswith("(") and ")" in remainder:
+        paren_match = re.match(r"^\s*\(([^)]+)\)", remainder)
+        if paren_match:
+            title = paren_match.group(1).strip()
+        else:
+            return None
+    # Pattern 3: Just whitespace then title
+    elif remainder[0:1].isspace() or remainder[0:1].isalpha():
+        title = remainder.strip()
+    else:
+        return None
+
+    # Clean up common artifacts from the title
+    title = re.sub(r"\[.*?\]", "", title)  # Remove [tags]
+    title = re.sub(r"\d{3,4}p", "", title, flags=re.IGNORECASE)  # Remove quality markers
+    title = re.sub(
+        r"\b(?:WEB-?DL|HDTV|BluRay|x264|x265|HEVC|10bit)\b", "", title, flags=re.IGNORECASE
+    )
+    title = title.strip(" .-_")
+
+    return title if title else None
 
 
 def extract_date(filename: str) -> DateMatch | None:
