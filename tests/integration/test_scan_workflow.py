@@ -1,11 +1,13 @@
 """Integration test demonstrating scan enhancements workflow."""
 
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
-from rosey.grouper import build_media_groups
+from rosey.grouper import MediaGroup, build_media_groups
 from rosey.identifier import identify_file
+from rosey.models import MediaItem, Score
 from rosey.planner import plan_path
 from rosey.scanner import scan_directory
 from rosey.scorer import score_identification
@@ -69,7 +71,7 @@ def test_complete_workflow(complete_media_structure, tmp_path):
     assert len(video_files) == 5  # 2 movies + 3 TV episodes (one was not created)
 
     # Step 2: Build media groups
-    groups = build_media_groups(video_files, source_path)
+    groups: list[MediaGroup] = build_media_groups(video_files, source_path)
 
     # Should have 3 groups: 2 movies, 1 show
     assert len(groups) == 3
@@ -81,7 +83,7 @@ def test_complete_workflow(complete_media_structure, tmp_path):
     assert len(show_groups) == 1
 
     # Step 3: Process each group
-    all_items = []
+    all_items: list[dict[str, Any]] = []
     for group in groups:
         for video_path in group.primary_videos:
             # Identify
@@ -106,19 +108,31 @@ def test_complete_workflow(complete_media_structure, tmp_path):
     assert len(all_items) == 5
 
     # Verify movie items
-    movie_items = [i for i in all_items if i["item"].kind == "movie"]
+    movie_items = []
+    for i in all_items:
+        item = cast(MediaItem, i["item"])
+        if item.kind == "movie":
+            movie_items.append(i)
     assert len(movie_items) == 2
     for item_dict in movie_items:
-        assert movies_root in item_dict["destination"]
-        assert item_dict["score"].confidence > 0
+        dest = cast(str, item_dict["destination"])
+        score = cast(Score, item_dict["score"])
+        assert movies_root in dest
+        assert score.confidence > 0
 
     # Verify TV items
-    tv_items = [i for i in all_items if i["item"].kind == "episode"]
+    tv_items = []
+    for i in all_items:
+        item = cast(MediaItem, i["item"])
+        if item.kind == "episode":
+            tv_items.append(i)
     assert len(tv_items) == 3
     for item_dict in tv_items:
-        assert tv_root in item_dict["destination"]
-        assert "Breaking Bad" in item_dict["destination"]
-        assert item_dict["score"].confidence > 0
+        dest = cast(str, item_dict["destination"])
+        score = cast(Score, item_dict["score"])
+        assert tv_root in dest
+        assert "Breaking Bad" in dest
+        assert score.confidence > 0
 
     # Verify companions were discovered
     for group in groups:
@@ -140,6 +154,7 @@ def test_media_group_ui_tree_representation(complete_media_structure):
     groups = build_media_groups(video_files, source_path)
 
     # Simulate tree structure
+    tree_structure: dict[str, list[dict[str, Any]]]
     tree_structure = {"Movies": [], "Shows": [], "Unknown": []}
 
     for group in groups:
