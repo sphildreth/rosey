@@ -123,7 +123,7 @@ Implementation note: grouping occurs after file scan; the existing `Scanner` sta
 
 ### Show
 
-This show is named "Maude" and has 6 seasons and an "Extras" directory
+This show is named "Maude" and has 6 seasons and an "Extras" (here seen as "Maude - Specials") directory
 
 ```
 Maude/
