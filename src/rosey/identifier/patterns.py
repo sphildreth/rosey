@@ -82,11 +82,10 @@ def extract_title_before_episode(filename: str) -> str:
     for pattern in EPISODE_PATTERNS:
         match = pattern.search(filename)
         if match:
-            # Return everything before the episode marker
             title_part = filename[: match.start()]
             # Also check for em-dash or hyphen followed by space (often separates show title from episode)
             # Remove trailing em-dash/hyphen that might be episode title separator
-            title_part = re.sub(r"[\s\-\u2013]+$", "", title_part)
+            title_part = re.sub(r"[\s\-\u2013\u2014]+$", "", title_part)
             return title_part
 
     # If no episode pattern, check for date pattern
@@ -364,6 +363,9 @@ def clean_title(title: str, extracted_year: int | None = None) -> str:
 
     # Remove year in parentheses first
     title = re.sub(r"\(\d{4}\)", "", title)
+
+    # Remove release group tags [xxx] before separator conversion
+    title = re.sub(r"\[.*?\]", "", title)
 
     # Remove common separators and clean up (convert to spaces) - do this early
     # Convert dots, underscores, hyphens, and em-dashes to spaces
