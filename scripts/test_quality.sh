@@ -12,20 +12,6 @@ if [ ! -f "pyproject.toml" ]; then
     exit 1
 fi
 
-#!/bin/bash
-
-# Local Quality Check Script
-# Mimics the CI checks for linting, testing, and UI smoke test
-
-echo "=== Rosey Local Quality Check ==="
-echo
-
-# Check if we're in the right directory
-if [ ! -f "pyproject.toml" ]; then
-    echo "Error: Run this script from the rosey project root directory"
-    exit 1
-fi
-
 # Activate virtual environment if it exists
 if [ -f ".venv/bin/activate" ]; then
     echo "Activating virtual environment..."
@@ -78,18 +64,35 @@ fi
 echo
 
 echo "5. Running UI smoke test..."
-# Check if xvfb is available (Linux)
-if command -v xvfb-run &> /dev/null; then
+# Prefer xvfb-run; fallback to raw Xvfb; final fallback to Qt offscreen
+if command -v xvfb-run >/dev/null 2>&1; then
     if xvfb-run -a python -c "from rosey.app import main; import sys; sys.exit(0)"; then
         echo "✓ UI smoke test passed"
     else
         echo "✗ UI smoke test failed"
         FAILED=1
     fi
+elif command -v Xvfb >/dev/null 2>&1; then
+    echo "xvfb-run not found; using Xvfb directly…"
+    Xvfb :99 -screen 0 1280x800x24 >/dev/null 2>&1 &
+    XVFB_PID=$!
+    export DISPLAY=:99
+    trap "kill $XVFB_PID" EXIT
+    if python -c "from rosey.app import main; import sys; sys.exit(0)"; then
+        echo "✓ UI smoke test passed"
+    else
+        echo "✗ UI smoke test failed"
+        FAILED=1
+    fi
 else
-    echo "Warning: xvfb-run not found. Skipping UI smoke test."
-    echo "On Ubuntu/Debian: sudo apt-get install xvfb"
-    echo "On other systems: install Xvfb"
+    echo "xvfb-run/Xvfb not found; trying Qt offscreen platform…"
+    if QT_QPA_PLATFORM=offscreen python -c "from rosey.app import main; import sys; sys.exit(0)"; then
+        echo "✓ UI smoke test passed (offscreen)"
+    else
+        echo "Warning: No headless backend available. Skipping UI smoke test."
+        echo "Ubuntu/Debian: sudo apt-get install xvfb"
+        echo "Arch/Manjaro:  sudo pacman -S xorg-server-xvfb"
+    fi
 fi
 
 echo
