@@ -87,21 +87,26 @@ class IdentifyDialog(QDialog):
         self.manual_year = QLineEdit()
         manual_layout.addWidget(self.manual_year)
 
-        # TV-specific fields
+        # TV-specific fields (hidden for media group identification)
+        # When identifying a media group, we identify the show itself, not individual episodes
         self.season_label = QLabel("Season (TV Shows only):")
+        self.season_label.setVisible(False)  # Hidden for media group identification
         manual_layout.addWidget(self.season_label)
         self.season_edit = QLineEdit()
+        self.season_edit.setVisible(False)  # Hidden for media group identification
         manual_layout.addWidget(self.season_edit)
 
         self.episode_label = QLabel("Episode (TV Shows only):")
+        self.episode_label.setVisible(False)  # Hidden for media group identification
         manual_layout.addWidget(self.episode_label)
         self.episode_edit = QLineEdit()
+        self.episode_edit.setVisible(False)  # Hidden for media group identification
         manual_layout.addWidget(self.episode_edit)
 
         layout.addWidget(manual_group)
 
-        # Initially hide season/episode for TV Shows since we're identifying the show
-        self.on_type_changed(self.type_combo.currentText())
+        # Note: Season/episode fields are permanently hidden when identifying media groups
+        # They would only be relevant for single-file episode identification
 
         # Buttons
         buttons = QHBoxLayout()
@@ -158,12 +163,10 @@ class IdentifyDialog(QDialog):
             self.search_btn.setText("Search")
 
     def on_type_changed(self, media_type: str) -> None:
-        """Show/hide season and episode fields based on media type."""
-        is_tv = media_type == "TV Show"
-        self.season_label.setVisible(is_tv)
-        self.season_edit.setVisible(is_tv)
-        self.episode_label.setVisible(is_tv)
-        self.episode_edit.setVisible(is_tv)
+        """Handle media type changes (for future use if needed)."""
+        # Season/episode fields are always hidden when identifying media groups
+        # This method is kept for consistency but doesn't show/hide fields anymore
+        pass
 
     def on_result_selected(self, item: QListWidgetItem) -> None:
         """Handle selection of a search result."""
@@ -194,9 +197,6 @@ class IdentifyDialog(QDialog):
                 "year": self.manual_year.text(),
                 "type": "episode" if is_tv else "movie",
             }
-            # Only include season/episode for TV if provided (though hidden in this context)
-            if is_tv and self.season_edit.text():
-                result["season"] = self.season_edit.text()
-            if is_tv and self.episode_edit.text():
-                result["episode"] = self.episode_edit.text()
+            # Note: season/episode are not included when identifying media groups
+            # Individual episodes inherit show-level identification
             return result

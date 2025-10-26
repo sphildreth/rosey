@@ -53,6 +53,7 @@ class ScanningConfig(BaseModel):
     concurrency_local: int = 8
     concurrency_network: int = 2
     follow_symlinks: bool = False
+    enforce_one_media_per_folder: bool = False
 
 
 class ProvidersConfig(BaseModel):

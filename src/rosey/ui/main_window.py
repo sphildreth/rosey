@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from rosey.config import get_config_path, load_config, save_config
+from rosey.grouper import build_media_groups
 from rosey.identifier import identify_file
 from rosey.models import IdentificationResult
 from rosey.mover import move_with_sidecars
@@ -78,31 +79,42 @@ class ScanWorker(QRunnable):
                 follow_symlinks=self.follow_symlinks,
             )
             video_results = [r for r in results if r.is_video and not r.error]
+            video_paths = [r.path for r in video_results]
+
+            # Build media groups
+            self.signals.progress.emit("Grouping media files...")
+            groups = build_media_groups(
+                video_paths,
+                self.source_path,
+                enforce_one_media=False,  # Can be made configurable later
+            )
 
             items = []
-            for scan_result in video_results:
-                self.signals.progress.emit(f"Identifying {scan_result.path}...")
+            for group in groups:
+                self.signals.progress.emit(f"Processing {group.directory}...")
 
-                # Identify
-                ident_result = identify_file(scan_result.path)
+                for video_path in group.primary_videos:
+                    # Identify
+                    ident_result = identify_file(video_path)
 
-                # Score
-                score = score_identification(ident_result)
+                    # Score
+                    score = score_identification(ident_result)
 
-                # Plan destination using configured roots
-                destination = plan_path(
-                    ident_result.item,
-                    movies_root=self.movies_root,
-                    tv_root=self.tv_root,
-                )
+                    # Plan destination using configured roots
+                    destination = plan_path(
+                        ident_result.item,
+                        movies_root=self.movies_root,
+                        tv_root=self.tv_root,
+                    )
 
-                items.append(
-                    {
-                        "item": ident_result.item,
-                        "score": score,
-                        "destination": destination,
-                    }
-                )
+                    items.append(
+                        {
+                            "item": ident_result.item,
+                            "score": score,
+                            "destination": destination,
+                            "group": group,  # Keep reference to the group
+                        }
+                    )
 
             self.signals.finished.emit(items)
         except Exception as e:
@@ -181,6 +193,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.items: list[dict] = []
+        self.groups: dict[str, dict] = {}  # media_directory -> {kind, items, node}
         self.movie_nodes: dict[str, QTreeWidgetItem] = {}
         self.show_nodes: dict[str, QTreeWidgetItem] = {}
         self._thread_pool = QThreadPool.globalInstance()
@@ -397,26 +410,49 @@ class MainWindow(QMainWindow):
             self.table.setItem(row, 4, dest_item)
 
     def update_tree(self) -> None:
-        """Update tree with discovered movies and shows."""
+        """Update tree with discovered media groups."""
         # Clear children
         self.tree_movies.takeChildren()
         self.tree_shows.takeChildren()
         self.tree_unknown.takeChildren()
         self.movie_nodes.clear()
         self.show_nodes.clear()
+        self.groups.clear()
 
+        # Group items by media directory
+        group_map: dict[str, dict] = {}
         for result in self.items:
-            item = result["item"]
-            if item.kind == "movie":
-                title = item.title or "Unknown Movie"
-                if title not in self.movie_nodes:
-                    node = QTreeWidgetItem(self.tree_movies, [title])
-                    self.movie_nodes[title] = node
-            elif item.kind == "episode":
-                title = item.title or "Unknown Show"
-                if title not in self.show_nodes:
-                    node = QTreeWidgetItem(self.tree_shows, [title])
-                    self.show_nodes[title] = node
+            group = result.get("group")
+            if group:
+                media_dir = group.directory
+                if media_dir not in group_map:
+                    group_map[media_dir] = {
+                        "kind": group.kind,
+                        "directory": media_dir,
+                        "items": [],
+                    }
+                group_map[media_dir]["items"].append(result)
+
+        # Create tree nodes for each media directory
+        from pathlib import Path
+
+        for media_dir, group_data in group_map.items():
+            kind = group_data["kind"]
+            dir_name = Path(media_dir).name
+
+            if kind == "movie":
+                node = QTreeWidgetItem(self.tree_movies, [dir_name])
+                self.movie_nodes[media_dir] = node
+                group_data["node"] = node
+            elif kind == "show":
+                node = QTreeWidgetItem(self.tree_shows, [dir_name])
+                self.show_nodes[media_dir] = node
+                group_data["node"] = node
+            else:  # unknown
+                node = QTreeWidgetItem(self.tree_unknown, [dir_name])
+                group_data["node"] = node
+
+            self.groups[media_dir] = group_data
 
     @Slot()
     def on_scan(self) -> None:
@@ -671,28 +707,21 @@ class MainWindow(QMainWindow):
                     )
                     self.table.setRowHidden(row, hide)
         else:
-            # Child node
-            parent = item.parent()
-            if parent == self.tree_movies:
-                # Filter by movie title
-                selected_title = item.text(0)
+            # Child node - filter by media directory
+            # Find which media directory this node represents
+            selected_media_dir = None
+            for media_dir, group_data in self.groups.items():
+                if group_data.get("node") == item:
+                    selected_media_dir = media_dir
+                    break
+
+            if selected_media_dir:
+                # Show only items from this media directory
                 for row in range(self.table.rowCount()):
-                    type_item = self.table.item(row, 1)
-                    name_item = self.table.item(row, 2)
-                    if type_item and name_item:
-                        item_type = type_item.text()
-                        item_name = name_item.text()
-                        hide = item_type != "MOVIE" or not item_name.startswith(selected_title)
-                        self.table.setRowHidden(row, hide)
-            elif parent == self.tree_shows:
-                selected_title = item.text(0)
-                for row in range(self.table.rowCount()):
-                    type_item = self.table.item(row, 1)
-                    name_item = self.table.item(row, 2)
-                    if type_item and name_item:
-                        item_type = type_item.text()
-                        item_name = name_item.text()
-                        hide = item_type != "EPISODE" or not item_name.startswith(selected_title)
+                    if 0 <= row < len(self.items):
+                        result = self.items[row]
+                        group = result.get("group")
+                        hide = not (group and group.directory == selected_media_dir)
                         self.table.setRowHidden(row, hide)
 
     @Slot()
@@ -740,68 +769,77 @@ class MainWindow(QMainWindow):
 
     def on_identify(self, tree_item: QTreeWidgetItem) -> None:
         """Handle identify action using manual dialog."""
-        # Determine initial values from tree item
-        initial_title = ""
+        # Find the media directory this tree item represents
+        selected_media_dir = None
         initial_type = "movie"
 
-        if tree_item.parent() == self.tree_movies:
-            initial_type = "movie"
-            initial_title = tree_item.text(0)
-        elif tree_item.parent() == self.tree_shows:
-            initial_type = "episode"
-            initial_title = tree_item.text(0)
-        # For top-level items, use defaults
+        for media_dir, group_data in self.groups.items():
+            if group_data.get("node") == tree_item:
+                selected_media_dir = media_dir
+                initial_type = "movie" if group_data["kind"] == "movie" else "episode"
+                break
+
+        if not selected_media_dir:
+            # Top-level item or unknown - use defaults
+            if tree_item.parent() is None:
+                return
+            # Try to infer from parent
+            if tree_item.parent() == self.tree_movies:
+                initial_type = "movie"
+            elif tree_item.parent() == self.tree_shows:
+                initial_type = "episode"
+
+        # Get initial title from first item in the group
+        initial_title = ""
+        group_items: list[dict] = []
+        if selected_media_dir and selected_media_dir in self.groups:
+            group_data = self.groups[selected_media_dir]
+            group_items = group_data.get("items", [])
+            if group_items:
+                initial_title = group_items[0]["item"].title or ""
 
         dialog = IdentifyDialog(self.provider_manager, initial_title, initial_type, self)
         if dialog.exec():
             result = dialog.get_result()
-            if result:
-                # Update matching items
-                target_title = initial_title or result.get("title", "")
-                target_type = initial_type
-
-                for item_dict in self.items:
+            if result and group_items:
+                # Update all items in the media group
+                for item_dict in group_items:
                     item = item_dict["item"]
-                    if item.title == target_title and (
-                        (target_type == "movie" and item.kind == "movie")
-                        or (target_type == "episode" and item.kind == "episode")
-                    ):
-                        # Update from result
-                        if "id" in result:  # From provider
-                            item.nfo = item.nfo or {}
-                            item.nfo["tmdbid"] = str(result["id"])
-                            item.title = result.get("title", result.get("name", item.title))
-                            date = result.get("release_date", result.get("first_air_date", ""))
-                            if date:
-                                item.year = int(date[:4])
-                        else:  # Manual
-                            item.title = result.get("title", item.title)
-                            if result.get("year"):
-                                with contextlib.suppress(ValueError):
-                                    item.year = int(result["year"])
-                            if result.get("season") and item.kind == "episode":
-                                with contextlib.suppress(ValueError):
-                                    item.season = int(result["season"])
-                            if result.get("episode") and item.kind == "episode":
-                                with contextlib.suppress(ValueError):
-                                    item.episodes = [int(result["episode"])]
 
-                        # Re-score
-                        from rosey.models import IdentificationResult
+                    # Update from result
+                    if "id" in result:  # From provider
+                        item.nfo = item.nfo or {}
+                        item.nfo["tmdbid"] = str(result["id"])
+                        item.title = result.get("title", result.get("name", item.title))
+                        date = result.get("release_date", result.get("first_air_date", ""))
+                        if date:
+                            item.year = int(date[:4])
+                    else:  # Manual
+                        item.title = result.get("title", item.title)
+                        if result.get("year"):
+                            with contextlib.suppress(ValueError):
+                                item.year = int(result["year"])
+                        if result.get("season") and item.kind == "episode":
+                            with contextlib.suppress(ValueError):
+                                item.season = int(result["season"])
+                        if result.get("episode") and item.kind == "episode":
+                            with contextlib.suppress(ValueError):
+                                item.episodes = [int(result["episode"])]
 
-                        ident = IdentificationResult(item=item, reasons=["Manual identification"])
-                        new_score = score_identification(ident)
-                        item_dict["score"] = new_score
+                    # Re-score
+                    ident = IdentificationResult(item=item, reasons=["Manual identification"])
+                    new_score = score_identification(ident)
+                    item_dict["score"] = new_score
 
-                        # Re-plan destination
-                        new_dest = plan_path(
-                            item,
-                            movies_root=self.config.paths.movies,
-                            tv_root=self.config.paths.tv,
-                        )
-                        item_dict["destination"] = new_dest
+                    # Re-plan destination
+                    new_dest = plan_path(
+                        item,
+                        movies_root=self.config.paths.movies,
+                        tv_root=self.config.paths.tv,
+                    )
+                    item_dict["destination"] = new_dest
 
-                # Update UI
+                # Refresh display
                 self.populate_table(self.items)
                 self.update_tree()
                 self.log_activity("Manual identification completed")
