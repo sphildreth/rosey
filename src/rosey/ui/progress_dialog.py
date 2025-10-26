@@ -16,6 +16,7 @@ class ProgressDialog(QDialog):
     """Dialog showing progress with cancel button."""
 
     cancel_requested = Signal()
+    close_and_clear_requested = Signal()
 
     def __init__(
         self, title: str = "Processing", parent: QWidget | None = None, dry_run: bool = False
@@ -27,6 +28,7 @@ class ProgressDialog(QDialog):
         self.setMinimumHeight(300)
         self._cancelled = False
         self.dry_run = dry_run
+        self._clear_on_close = False
         self.init_ui()
 
     def init_ui(self) -> None:
@@ -95,17 +97,46 @@ class ProgressDialog(QDialog):
         """Check if cancel was requested."""
         return self._cancelled
 
-    def set_complete(self, success: bool = True) -> None:
-        """Mark operation as complete."""
+    def set_complete(self, success: bool = True, allow_clear: bool = False) -> None:
+        """Mark operation as complete.
+
+        Args:
+            success: Whether operation completed successfully
+            allow_clear: If True and success, show "Close and Clear" button option
+        """
         if success:
             self.status_label.setText("Complete!")
-            self.cancel_button.setText("Close")
-            self.cancel_button.setEnabled(True)
             self.cancel_button.clicked.disconnect()
-            self.cancel_button.clicked.connect(self.accept)
+
+            if allow_clear:
+                # Add "Close and Clear" button for successful operations
+                self.cancel_button.setText("Close and Clear")
+                self.cancel_button.setStyleSheet(
+                    "QPushButton { "
+                    "background-color: #4caf50; "
+                    "color: white; "
+                    "font-weight: bold; "
+                    "padding: 8px 16px; "
+                    "}"
+                    "QPushButton:hover { "
+                    "background-color: #45a049; "
+                    "}"
+                )
+                self.cancel_button.clicked.connect(self.on_close_and_clear)
+            else:
+                self.cancel_button.setText("Close")
+                self.cancel_button.clicked.connect(self.accept)
+
+            self.cancel_button.setEnabled(True)
         else:
             self.status_label.setText("Failed - see details")
             self.cancel_button.setText("Close")
             self.cancel_button.setEnabled(True)
             self.cancel_button.clicked.disconnect()
             self.cancel_button.clicked.connect(self.reject)
+
+    def on_close_and_clear(self) -> None:
+        """Handle Close and Clear button click."""
+        self._clear_on_close = True
+        self.close_and_clear_requested.emit()
+        self.accept()

@@ -2,8 +2,9 @@
 
 from PySide6.QtWidgets import (
     QDialog,
-    QDialogButtonBox,
+    QHBoxLayout,
     QLabel,
+    QPushButton,
     QRadioButton,
     QVBoxLayout,
     QWidget,
@@ -18,6 +19,7 @@ class ConflictDialog(QDialog):
         self.source_path = source_path
         self.dest_path = dest_path
         self.conflict_policy = "skip"
+        self.abort_all = False
         self.init_ui()
 
     def init_ui(self) -> None:
@@ -48,13 +50,37 @@ class ConflictDialog(QDialog):
         self.rb_keep_both = QRadioButton("Keep Both - Rename the new file with (1) suffix")
         layout.addWidget(self.rb_keep_both)
 
-        # Buttons
-        button_box = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        # Buttons layout
+        button_layout = QHBoxLayout()
+
+        # Apply button
+        self.apply_button = QPushButton("Apply")
+        self.apply_button.clicked.connect(self.on_apply)
+        button_layout.addWidget(self.apply_button)
+
+        # Skip button
+        self.skip_button = QPushButton("Skip This File")
+        self.skip_button.clicked.connect(self.on_skip)
+        button_layout.addWidget(self.skip_button)
+
+        # Abort button (larger and more prominent)
+        self.abort_button = QPushButton("ABORT ALL")
+        self.abort_button.setStyleSheet(
+            "QPushButton { "
+            "background-color: #d32f2f; "
+            "color: white; "
+            "font-weight: bold; "
+            "font-size: 12pt; "
+            "padding: 10px 20px; "
+            "}"
+            "QPushButton:hover { "
+            "background-color: #b71c1c; "
+            "}"
         )
-        button_box.accepted.connect(self.accept)
-        button_box.rejected.connect(self.reject)
-        layout.addWidget(button_box)
+        self.abort_button.clicked.connect(self.on_abort)
+        button_layout.addWidget(self.abort_button)
+
+        layout.addLayout(button_layout)
 
     def get_policy(self) -> str:
         """Get selected conflict policy."""
@@ -66,7 +92,19 @@ class ConflictDialog(QDialog):
             return "keep_both"
         return "skip"
 
-    def accept(self) -> None:
-        """Handle dialog acceptance."""
+    def on_apply(self) -> None:
+        """Apply the selected policy for this file."""
         self.conflict_policy = self.get_policy()
-        super().accept()
+        self.abort_all = False
+        self.accept()
+
+    def on_skip(self) -> None:
+        """Skip this file and continue."""
+        self.conflict_policy = "skip"
+        self.abort_all = False
+        self.accept()
+
+    def on_abort(self) -> None:
+        """Abort the entire operation."""
+        self.abort_all = True
+        self.reject()

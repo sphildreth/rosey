@@ -1,11 +1,14 @@
 """Configuration management for Rosey."""
 
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 
 class PathsConfig(BaseModel):
@@ -45,6 +48,9 @@ class BehaviorConfig(BaseModel):
     dry_run: bool = True
     auto_select_green: bool = True
     conflict_policy: Literal["ask", "skip", "replace", "keep_both"] = "ask"
+    auto_delete_patterns: list[str] = Field(
+        default_factory=lambda: ["sample.mkv", "*.nfo", "*.txt"]
+    )
 
 
 class ScanningConfig(BaseModel):
@@ -125,8 +131,8 @@ def load_config() -> RoseyConfig:
             data = json.load(f)
         return RoseyConfig(**data)
     except Exception as e:
-        print(f"Warning: Failed to load config from {config_path}: {e}")
-        print("Using default configuration.")
+        logger.warning(f"Failed to load config from {config_path}: {e}")
+        logger.info("Using default configuration.")
         return RoseyConfig()
 
 

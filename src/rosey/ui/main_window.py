@@ -659,10 +659,21 @@ class MainWindow(QMainWindow):
                     from rosey.ui.conflict_dialog import ConflictDialog
 
                     dlg = ConflictDialog(item.source_path, dest, self)
-                    chosen = dlg.get_policy() if dlg.exec() else "skip"
-                    if chosen in ("skip", "replace", "keep_both"):
-                        eff_policy = cast(MoverPolicy, chosen)
+                    if dlg.exec():
+                        if dlg.abort_all:
+                            # User wants to abort the entire operation
+                            self.statusBar().showMessage("Move operation cancelled")
+                            return
+                        chosen = dlg.get_policy()
+                        if chosen in ("skip", "replace", "keep_both"):
+                            eff_policy = cast(MoverPolicy, chosen)
+                        else:
+                            eff_policy = "skip"
                     else:
+                        # Dialog was rejected (Abort All clicked)
+                        if dlg.abort_all:
+                            self.statusBar().showMessage("Move operation cancelled")
+                            return
                         eff_policy = "skip"
                 else:
                     # No conflict expected; default to safe policy
@@ -673,6 +684,7 @@ class MainWindow(QMainWindow):
         title = "Moving Files (DRY RUN - Preview Only)" if dry_run else "Moving Files"
         progress = ProgressDialog(title, self, dry_run=dry_run)
         cancelled = {"flag": False}
+        moved_rows = []  # Track successfully moved rows
 
         def on_cancel() -> None:
             cancelled["flag"] = True
@@ -688,9 +700,10 @@ class MainWindow(QMainWindow):
                 status = Signal(str)
                 finished = Signal(dict)
 
-            def __init__(self, items: list[dict]) -> None:
+            def __init__(self, items: list[dict], selected_rows: list[int]) -> None:
                 super().__init__()
                 self.items = items
+                self.selected_rows = selected_rows
                 self.signals = self.Signals()
 
             def run(self) -> None:  # noqa: D401
@@ -699,6 +712,7 @@ class MainWindow(QMainWindow):
 
                 moved = 0
                 errors: list[str] = []
+                moved_indices: list[int] = []  # Track which rows were successfully moved
                 total = len(self.items)
                 total_bytes = 0
                 start_time = time.time()
@@ -733,6 +747,8 @@ class MainWindow(QMainWindow):
                         )
                         if move_result.success:
                             moved += 1
+                            # Track the row index of successfully moved item
+                            moved_indices.append(self.selected_rows[idx - 1])
                             if not dry_run:
                                 total_bytes += file_size
                         else:
@@ -748,9 +764,16 @@ class MainWindow(QMainWindow):
                             f"Processing {idx}/{total} - Speed: {speed_mbps:.2f} MB/s"
                         )
 
-                self.signals.finished.emit({"moved": moved, "total": total, "errors": errors})
+                self.signals.finished.emit(
+                    {
+                        "moved": moved,
+                        "total": total,
+                        "errors": errors,
+                        "moved_indices": moved_indices,
+                    }
+                )
 
-        worker = MoveWorker(move_specs)
+        worker = MoveWorker(move_specs, rows)
         worker.signals.message.connect(progress.append_detail)
         worker.signals.progress_value.connect(progress.set_progress)
         worker.signals.status.connect(progress.set_status)
@@ -759,13 +782,171 @@ class MainWindow(QMainWindow):
             moved = summary.get("moved", 0)
             total = summary.get("total", 0)
             errors = summary.get("errors", [])
+            moved_indices = summary.get("moved_indices", [])
+
             for err in errors:
                 progress.append_detail(f"Error: {err}")
-            progress.set_complete(success=len(errors) == 0)
+
+            # Store moved indices for potential clearing
+            nonlocal moved_rows
+            moved_rows = moved_indices
+
+            # Enable "Close and Clear" only if 100% success with no errors and not dry run
+            allow_clear = len(errors) == 0 and moved == total and not dry_run
+            progress.set_complete(success=len(errors) == 0, allow_clear=allow_clear)
             self.statusBar().showMessage(f"Move complete: {moved}/{total}")
 
+        def on_close_and_clear() -> None:
+            """Remove successfully moved items from table and update tree."""
+            if not moved_rows:
+                return
+
+            # Get the currently selected tree item to determine what to clear
+            selected_tree_items = self.tree.selectedItems()
+            if not selected_tree_items:
+                return
+
+            # Track source directories to check for cleanup
+            source_directories_to_check = set()
+
+            # Remove items from self.items (in reverse order to maintain indices)
+            for row_idx in sorted(moved_rows, reverse=True):
+                if 0 <= row_idx < len(self.items):
+                    result = self.items[row_idx]
+                    group = result.get("group")
+                    item = result.get("item")
+
+                    # Track the source directory for cleanup
+                    if item and item.source_path:
+                        source_dir = Path(item.source_path).parent
+                        source_directories_to_check.add(source_dir)
+
+                    # Remove from items list
+                    del self.items[row_idx]
+
+                    # Update group counts
+                    if group and group.directory in self.groups:
+                        group_data = self.groups[group.directory]
+                        group_data["count"] = group_data.get("count", 1) - 1
+
+                        # If group is now empty, remove it
+                        if group_data["count"] <= 0:
+                            # Remove the tree node
+                            node = group_data.get("node")
+                            if node and node.parent():
+                                node.parent().removeChild(node)
+                            # Remove from groups dict
+                            del self.groups[group.directory]
+                            # Remove from node tracking dicts
+                            if group.directory in self.movie_nodes:
+                                del self.movie_nodes[group.directory]
+                            if group.directory in self.show_nodes:
+                                del self.show_nodes[group.directory]
+
+            # Delete files matching auto-delete patterns
+            deleted_files = self._delete_matching_files(source_directories_to_check)
+            if deleted_files:
+                self.log_activity(f"Auto-deleted {deleted_files} file(s) matching patterns")
+
+            # Clean up empty directories in source folders
+            removed_dirs = self._cleanup_empty_directories(source_directories_to_check)
+            if removed_dirs:
+                self.log_activity(f"Removed {len(removed_dirs)} empty directories")
+
+            # Refresh the table and tree
+            self.update_tree(preserve_selection=True)
+            self.populate_table(items=self.items)
+
+            self.log_activity(f"Cleared {len(moved_rows)} successfully moved items")
+            self.statusBar().showMessage(f"Cleared {len(moved_rows)} moved items")
+
         worker.signals.finished.connect(on_finished)
+        progress.close_and_clear_requested.connect(on_close_and_clear)
         self._thread_pool.start(worker)
+
+    def _delete_matching_files(self, directories: set[Path]) -> int:
+        """Delete files matching auto-delete patterns in given directories.
+
+        Args:
+            directories: Set of directories to search for matching files
+
+        Returns:
+            Count of deleted files
+        """
+        import fnmatch
+
+        deleted_count = 0
+        patterns = self.config.behavior.auto_delete_patterns
+
+        if not patterns:
+            return 0
+
+        # Convert patterns to case-insensitive
+        for directory in directories:
+            if not directory.exists() or not directory.is_dir():
+                continue
+
+            try:
+                # Get all files in directory (non-recursive for safety)
+                for file_path in directory.iterdir():
+                    if not file_path.is_file():
+                        continue
+
+                    file_name = file_path.name
+
+                    # Check against each pattern
+                    for pattern in patterns:
+                        # Support both glob patterns (*.txt) and exact matches (sample.mkv)
+                        if fnmatch.fnmatch(file_name.lower(), pattern.lower()):
+                            try:
+                                file_path.unlink()
+                                deleted_count += 1
+                                self.log_activity(f"Auto-deleted: {file_path}")
+                                break  # Don't check other patterns for this file
+                            except (OSError, PermissionError) as e:
+                                self.log_activity(f"Could not delete {file_path}: {e}")
+
+            except (OSError, PermissionError) as e:
+                self.log_activity(f"Could not access directory {directory}: {e}")
+
+        return deleted_count
+
+    def _cleanup_empty_directories(self, directories: set[Path]) -> list[Path]:
+        """Remove empty directories recursively.
+
+        Args:
+            directories: Set of directories to check and potentially remove
+
+        Returns:
+            List of removed directory paths
+        """
+        removed_dirs = []
+
+        # Sort directories by depth (deepest first) to handle nested empty dirs
+        sorted_dirs = sorted(directories, key=lambda p: len(p.parts), reverse=True)
+
+        for dir_path in sorted_dirs:
+            try:
+                # Check if directory exists and is empty
+                if dir_path.exists() and dir_path.is_dir():
+                    # Try to remove directory and all empty parent directories
+                    current = dir_path
+                    while current.exists() and current.is_dir():
+                        # Check if directory is empty
+                        if not any(current.iterdir()):
+                            current.rmdir()
+                            removed_dirs.append(current)
+                            self.log_activity(f"Removed empty directory: {current}")
+                            # Move to parent directory
+                            current = current.parent
+                        else:
+                            # Directory not empty, stop
+                            break
+            except (OSError, PermissionError) as e:
+                # Log but don't fail - cleanup is best-effort
+                self.log_activity(f"Could not remove directory {dir_path}: {e}")
+
+        return removed_dirs
 
     @Slot()
     def on_select_green(self) -> None:

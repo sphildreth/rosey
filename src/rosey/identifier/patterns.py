@@ -59,9 +59,9 @@ PART_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-# Season folder pattern (matches "Season 01", "Season 1", or "S03")
+# Season folder pattern (matches "Season 01", "Season 1", "S03", or S## anywhere in folder name)
 SEASON_FOLDER_PATTERN = re.compile(
-    r"(?:[Ss]eason[.\s]*(?P<season>\d{1,2})|^[Ss](?P<season2>\d{1,2})$)",
+    r"(?:[Ss]eason[.\s]*(?P<season>\d{1,2})|(?:^|[.\s_-])[Ss](?P<season2>\d{1,2})(?:[.\s_-]|$))",
     re.IGNORECASE,
 )
 
@@ -83,7 +83,11 @@ def extract_title_before_episode(filename: str) -> str:
         match = pattern.search(filename)
         if match:
             # Return everything before the episode marker
-            return filename[: match.start()]
+            title_part = filename[: match.start()]
+            # Also check for em-dash or hyphen followed by space (often separates show title from episode)
+            # Remove trailing em-dash/hyphen that might be episode title separator
+            title_part = re.sub(r"[\s\-\u2013]+$", "", title_part)
+            return title_part
 
     # If no episode pattern, check for date pattern
     match = DATE_PATTERN.search(filename)
@@ -196,7 +200,7 @@ def extract_date(filename: str) -> DateMatch | None:
 
 def extract_year(filename: str) -> int | None:
     """
-    Extract year from filename.
+    Extract year from filename, excluding years that are part of date patterns.
 
     Args:
         filename: Filename to parse
@@ -208,15 +212,38 @@ def extract_year(filename: str) -> int | None:
     paren_pattern = re.compile(r"\((?P<year>\d{4})\)")
     match = paren_pattern.search(filename)
     if match:
-        year = int(match.group("year"))
-        # Validate year range (1900-2040 seems reasonable for movies)
-        if 1900 <= year <= 2040:
-            return year
+        year_match_pos = match.start()
+        # Check if this year is part of a date pattern (YYYY-MM-DD or YYYY.MM.DD)
+        date_check = re.search(r"\d{4}[-\.]\d{2}[-\.]\d{2}", filename[max(0, year_match_pos - 1) :])
+        if not date_check or date_check.start() > 1:
+            # Not part of a date, or date starts after this year
+            year = int(match.group("year"))
+            # Validate year range (1900-2040 seems reasonable for movies)
+            if 1900 <= year <= 2040:
+                return year
 
     # Then try standalone year with flexible boundaries
     standalone_pattern = re.compile(r"(?:^|[._\s\-])(?P<year>19\d{2}|20\d{2})(?=[._\s\-]|$)")
-    match = standalone_pattern.search(filename)
-    if match:
+    for match in standalone_pattern.finditer(filename):
+        year_match_pos = match.start("year")
+        # Check if this year is part of a date pattern (YYYY-MM-DD or YYYY.MM.DD)
+        # Look a bit before and after the year to catch the full date pattern
+        context_start = max(0, year_match_pos - 2)
+        context_end = min(len(filename), year_match_pos + 15)
+        context = filename[context_start:context_end]
+        if re.search(r"\d{4}[-\.]\d{2}[-\.]\d{2}", context):
+            # This year is part of a date, skip it
+            continue
+
+        # Check if this year immediately follows an episode marker (e.g., S05E06-1976)
+        # Look for pattern like S##E##-YYYY or ##x##-YYYY right before the year
+        pre_context = filename[max(0, year_match_pos - 10) : year_match_pos]
+        if re.search(r"[Ss]\d{1,2}[Ee]\d{1,4}[-_]$", pre_context) or re.search(
+            r"\d{1,2}x\d{1,4}[-_]$", pre_context, re.IGNORECASE
+        ):
+            # Year directly follows episode marker, likely part of episode ID
+            continue
+
         year = int(match.group("year"))
         # Validate year range
         if 1900 <= year <= 2040:
@@ -339,8 +366,8 @@ def clean_title(title: str, extracted_year: int | None = None) -> str:
     title = re.sub(r"\(\d{4}\)", "", title)
 
     # Remove common separators and clean up (convert to spaces) - do this early
-    # Convert dots, underscores, and hyphens to spaces
-    title = re.sub(r"[._\-]+", " ", title)
+    # Convert dots, underscores, hyphens, and em-dashes to spaces
+    title = re.sub(r"[._\-\u2013\u2014]+", " ", title)
 
     # Now remove standalone year (but only after converting separators to spaces)
     # Only remove the extracted year, not other year-like numbers that might be part of the title
@@ -505,6 +532,9 @@ def clean_title(title: str, extracted_year: int | None = None) -> str:
 
     # Remove explicit 'Season 01' tokens entirely (word + number) early to avoid leaving stray numbers
     title = re.sub(r"\bseason[s]?\s*\d{1,2}\b", "", title, flags=re.IGNORECASE)
+
+    # Remove compact season format (S01, S02, etc.)
+    title = re.sub(r"\b[Ss]\d{1,2}\b", "", title)
 
     # Remove collection words and numeric ranges (e.g., 'Complete Seasons 1 to 5')
     title = re.sub(r"\b(complete|seasons?|season pack)\b", "", title, flags=re.IGNORECASE)

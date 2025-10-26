@@ -214,7 +214,12 @@ class Identifier:
             year = nfo_data.year
         else:
             # Prefer a year embedded in the show folder (parent), else season folder
+            # For filename-only TV episodes (no folder structure), extract year from filename
             year = extract_year(parent_folder) or extract_year(folder_name)
+            if not year and not parent_folder:
+                # Only extract year from filename if there's no folder structure (bare filename)
+                # This avoids extracting episode dates as show years
+                year = extract_year(filename)
             if year:
                 reasons.append(f"Year {year} parsed from folder")
 

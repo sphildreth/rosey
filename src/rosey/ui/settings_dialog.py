@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QSpinBox,
     QTabWidget,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -148,15 +149,42 @@ class SettingsDialog(QDialog):
     def _create_behavior_tab(self) -> QWidget:
         """Create behavior configuration tab."""
         widget = QWidget()
-        layout = QFormLayout(widget)
+        layout = QVBoxLayout(widget)
+
+        # Checkboxes section
+        checkboxes_layout = QFormLayout()
 
         self.dry_run = QCheckBox("Dry Run Mode (Preview Only)")
         self.dry_run.setChecked(self.config.behavior.dry_run)
-        layout.addRow("", self.dry_run)
+        checkboxes_layout.addRow("", self.dry_run)
 
         self.auto_select_green = QCheckBox("Auto-Select Green Items")
         self.auto_select_green.setChecked(self.config.behavior.auto_select_green)
-        layout.addRow("", self.auto_select_green)
+        checkboxes_layout.addRow("", self.auto_select_green)
+
+        layout.addLayout(checkboxes_layout)
+
+        # Auto-delete patterns section
+        auto_delete_group = QGroupBox("Auto-Delete Patterns")
+        auto_delete_layout = QVBoxLayout(auto_delete_group)
+
+        info_label = QLabel(
+            'Files matching these patterns will be automatically deleted when using "Close and Clear".\n'
+            "Supports glob patterns (*.txt, *.nfo) and exact filenames (sample.mkv).\n"
+            "Enter one pattern per line. Matching is case-insensitive."
+        )
+        info_label.setWordWrap(True)
+        auto_delete_layout.addWidget(info_label)
+
+        self.auto_delete_patterns = QTextEdit()
+        self.auto_delete_patterns.setMaximumHeight(100)
+        # Load patterns from config (one per line)
+        patterns_text = "\n".join(self.config.behavior.auto_delete_patterns)
+        self.auto_delete_patterns.setPlainText(patterns_text)
+        auto_delete_layout.addWidget(self.auto_delete_patterns)
+
+        layout.addWidget(auto_delete_group)
+        layout.addStretch()
 
         return widget
 
@@ -204,6 +232,10 @@ class SettingsDialog(QDialog):
         # Update behavior
         self.config.behavior.dry_run = self.dry_run.isChecked()
         self.config.behavior.auto_select_green = self.auto_select_green.isChecked()
+        # Parse auto-delete patterns (one per line, skip empty lines)
+        patterns_text = self.auto_delete_patterns.toPlainText()
+        patterns = [line.strip() for line in patterns_text.split("\n") if line.strip()]
+        self.config.behavior.auto_delete_patterns = patterns
 
         # Update scanning
         self.config.scanning.concurrency_local = self.concurrency_local.value()
