@@ -34,6 +34,7 @@ from rosey.planner import plan_path
 from rosey.providers import ProviderManager
 from rosey.scanner import scan_directory
 from rosey.scorer import score_identification
+from rosey.ui.details_dialog import DetailsDialog
 from rosey.ui.identify_dialog import IdentifyDialog
 from rosey.ui.progress_dialog import ProgressDialog
 from rosey.ui.settings_dialog import SettingsDialog
@@ -251,7 +252,9 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(self.btn_scan)
 
         self.btn_settings = QPushButton("Settings")
-        self.btn_settings.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_VistaShield))
+        self.btn_settings.setIcon(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView)
+        )
         self.btn_settings.clicked.connect(self.on_settings)
         toolbar.addWidget(self.btn_settings)
 
@@ -323,14 +326,20 @@ class MainWindow(QMainWindow):
         self.table.setHorizontalHeaderLabels(["✓", "Type", "Name", "Confidence", "Destination"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setSortingEnabled(True)
+        self.table.cellDoubleClicked.connect(self.on_table_double_click)
 
-        # Resize columns
+        # Resize columns - allow user to resize all columns
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        # Set initial widths
+        header.resizeSection(0, 30)  # Checkbox
+        header.resizeSection(1, 80)  # Type
+        header.resizeSection(2, 250)  # Name
+        header.resizeSection(3, 100)  # Confidence
+        header.resizeSection(4, 400)  # Destination
+        # Make last section stretch to fill remaining space
+        header.setStretchLastSection(True)
 
         main_splitter.addWidget(self.table)
         main_splitter.setStretchFactor(1, 3)
@@ -361,6 +370,13 @@ class MainWindow(QMainWindow):
 
     def populate_table(self, items: list) -> None:
         """Populate table with items."""
+        # Remember current sort state
+        header = self.table.horizontalHeader()
+        sort_column = header.sortIndicatorSection()
+        sort_order = header.sortIndicatorOrder()
+
+        # Disable sorting while populating to avoid performance issues
+        self.table.setSortingEnabled(False)
         self.table.setRowCount(len(items))
 
         for row, result in enumerate(items):
@@ -372,6 +388,8 @@ class MainWindow(QMainWindow):
             check_item = QTableWidgetItem()
             check_item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
             check_item.setCheckState(Qt.CheckState.Unchecked)
+            # Store the original index in user data so we can find it after sorting
+            check_item.setData(Qt.ItemDataRole.UserRole, row)
             self.table.setItem(row, 0, check_item)
 
             # Type
@@ -409,8 +427,37 @@ class MainWindow(QMainWindow):
             dest_item = QTableWidgetItem(dest)
             self.table.setItem(row, 4, dest_item)
 
-    def update_tree(self) -> None:
+        # Re-enable sorting and restore previous sort state
+        # Default to Destination column on first load (when no sort indicator exists)
+        self.table.setSortingEnabled(True)
+        if sort_column >= 0:
+            # Restore previous sort
+            self.table.sortItems(sort_column, sort_order)
+        else:
+            # First time - sort by Destination
+            self.table.sortItems(4, Qt.SortOrder.AscendingOrder)
+
+    def update_tree(self, preserve_selection: bool = False) -> None:
         """Update tree with discovered media groups."""
+        # Remember current selection if requested
+        selected_media_dir = None
+        if preserve_selection:
+            selected_items = self.tree.selectedItems()
+            if selected_items:
+                selected_item = selected_items[0]
+                self.log_activity(
+                    f"Tree update: Preserving selection for '{selected_item.text(0)}'"
+                )
+                # Find the media directory for this node
+                for media_dir, group_data in self.groups.items():
+                    if group_data.get("node") == selected_item:
+                        selected_media_dir = media_dir
+                        self.log_activity(f"Tree update: Found media_dir = {media_dir}")
+                        break
+
+        # Temporarily block selection signals to prevent filtering during rebuild
+        self.tree.blockSignals(True)
+
         # Clear children
         self.tree_movies.takeChildren()
         self.tree_shows.takeChildren()
@@ -427,32 +474,102 @@ class MainWindow(QMainWindow):
                 media_dir = group.directory
                 if media_dir not in group_map:
                     group_map[media_dir] = {
-                        "kind": group.kind,
+                        "kind": group.kind,  # Initial kind from scan
                         "directory": media_dir,
                         "items": [],
                     }
                 group_map[media_dir]["items"].append(result)
+
+        # Update kind based on actual items (in case identification changed it)
+        for _media_dir, group_data in group_map.items():
+            items = group_data["items"]
+            if items:
+                # Use the kind from the first item (all items in a group should have same kind)
+                first_item_kind = items[0]["item"].kind
+                old_kind = group_data["kind"]
+                group_data["kind"] = (
+                    "movie"
+                    if first_item_kind == "movie"
+                    else "show"
+                    if first_item_kind == "episode"
+                    else "unknown"
+                )
+                if old_kind != group_data["kind"]:
+                    self.log_activity(
+                        f"Tree update: Kind changed from '{old_kind}' to '{group_data['kind']}' for {_media_dir}"
+                    )
 
         # Create tree nodes for each media directory
         from pathlib import Path
 
         for media_dir, group_data in group_map.items():
             kind = group_data["kind"]
-            dir_name = Path(media_dir).name
+            items = group_data["items"]
+
+            # Determine display name from planned destination
+            if items:
+                dest = items[0]["destination"]
+                dest_path = Path(dest)
+
+                if kind == "movie":
+                    # For movies: movies_root / folder_name / file, so parent is folder_name
+                    display_name = dest_path.parent.name
+                elif kind == "show":
+                    # For TV shows: tv_root / show_folder / season / file, so parent.parent is show_folder
+                    # This will be "Show (Year) [tmdbid-ID]" after identification
+                    display_name = dest_path.parent.parent.name
+                else:
+                    # Fallback to source directory name
+                    display_name = Path(media_dir).name
+
+                self.log_activity(
+                    f"Tree update: Display name for {media_dir} = '{display_name}' (kind={kind}, dest={dest})"
+                )
+            else:
+                display_name = Path(media_dir).name
 
             if kind == "movie":
-                node = QTreeWidgetItem(self.tree_movies, [dir_name])
+                node = QTreeWidgetItem(self.tree_movies, [display_name])
                 self.movie_nodes[media_dir] = node
                 group_data["node"] = node
             elif kind == "show":
-                node = QTreeWidgetItem(self.tree_shows, [dir_name])
+                node = QTreeWidgetItem(self.tree_shows, [display_name])
                 self.show_nodes[media_dir] = node
                 group_data["node"] = node
             else:  # unknown
-                node = QTreeWidgetItem(self.tree_unknown, [dir_name])
+                node = QTreeWidgetItem(self.tree_unknown, [display_name])
                 group_data["node"] = node
 
             self.groups[media_dir] = group_data
+
+            # Log if this is the node we're trying to preserve
+            if preserve_selection and media_dir == selected_media_dir:
+                self.log_activity(
+                    f"Tree update: Created new node '{display_name}' under {kind} for preserved selection"
+                )
+
+        # Re-enable signals before restoring selection
+        self.tree.blockSignals(False)
+
+        # Restore selection if requested and the node still exists
+        if preserve_selection and selected_media_dir and selected_media_dir in self.groups:
+            node_to_select = self.groups[selected_media_dir].get("node")
+            if node_to_select:
+                self.log_activity(f"Tree update: Restoring selection to '{node_to_select.text(0)}'")
+                # Setting current item will trigger on_tree_selection which filters the table
+                self.tree.setCurrentItem(node_to_select)
+            else:
+                self.log_activity(
+                    f"Tree update: ERROR - Could not find node for media_dir {selected_media_dir}"
+                )
+        else:
+            if preserve_selection:
+                self.log_activity(
+                    f"Tree update: Could not restore selection (media_dir={selected_media_dir}, in groups={selected_media_dir in self.groups if selected_media_dir else False})"
+                )
+            # If not preserving selection, show all rows
+            for row in range(self.table.rowCount()):
+                self.table.setRowHidden(row, False)
 
     @Slot()
     def on_scan(self) -> None:
@@ -494,15 +611,20 @@ class MainWindow(QMainWindow):
         self.btn_scan.setEnabled(True)
 
     def _get_selected_rows(self) -> list[int]:
-        rows: list[int] = []
+        """Get original indices of selected rows (not visual row numbers)."""
+        indices: list[int] = []
         for row in range(self.table.rowCount()):
             check_item = self.table.item(row, 0)
             if check_item and check_item.checkState() == Qt.CheckState.Checked:
-                rows.append(row)
-        return rows
+                # Get the original index from user data
+                original_index = check_item.data(Qt.ItemDataRole.UserRole)
+                if original_index is not None:
+                    indices.append(original_index)
+        return indices
 
-    def _items_from_rows(self, rows: list[int]) -> list[dict]:
-        return [self.items[row] for row in rows if 0 <= row < len(self.items)]
+    def _items_from_rows(self, indices: list[int]) -> list[dict]:
+        """Get item dicts from original indices."""
+        return [self.items[idx] for idx in indices if 0 <= idx < len(self.items)]
 
     @Slot()
     def on_move_selected(self) -> None:
@@ -548,7 +670,8 @@ class MainWindow(QMainWindow):
 
             move_specs.append({"item": item, "destination": dest, "policy": eff_policy})
 
-        progress = ProgressDialog("Moving Files", self)
+        title = "Moving Files (DRY RUN - Preview Only)" if dry_run else "Moving Files"
+        progress = ProgressDialog(title, self, dry_run=dry_run)
         cancelled = {"flag": False}
 
         def on_cancel() -> None:
@@ -560,7 +683,9 @@ class MainWindow(QMainWindow):
 
         class MoveWorker(QRunnable):
             class Signals(QWidget):
-                progress = Signal(str)
+                message = Signal(str)
+                progress_value = Signal(int, int)
+                status = Signal(str)
                 finished = Signal(dict)
 
             def __init__(self, items: list[dict]) -> None:
@@ -569,17 +694,36 @@ class MainWindow(QMainWindow):
                 self.signals = self.Signals()
 
             def run(self) -> None:  # noqa: D401
+                import time
+                from pathlib import Path
+
                 moved = 0
                 errors: list[str] = []
                 total = len(self.items)
+                total_bytes = 0
+                start_time = time.time()
+
                 for idx, spec in enumerate(self.items, start=1):
                     if cancelled["flag"]:
-                        self.signals.progress.emit("Operation cancelled by user")
+                        self.signals.message.emit("Operation cancelled by user")
                         break
                     item = spec["item"]
                     dest = spec["destination"]
                     policy = spec.get("policy", "skip")
-                    self.signals.progress.emit(f"Moving {idx}/{total}: {dest}")
+                    source = item.source_path
+                    self.signals.message.emit(f"Moving {idx}/{total}:")
+                    self.signals.message.emit(f"  From: {source}")
+                    self.signals.message.emit(f"  To:   {dest}")
+
+                    # Get file size for speed calculation
+                    try:
+                        file_size = Path(source).stat().st_size
+                    except Exception:
+                        file_size = 0
+
+                    # Update progress bar
+                    self.signals.progress_value.emit(idx, total)
+
                     try:
                         move_result = move_with_sidecars(
                             item,
@@ -589,19 +733,27 @@ class MainWindow(QMainWindow):
                         )
                         if move_result.success:
                             moved += 1
+                            if not dry_run:
+                                total_bytes += file_size
                         else:
                             errors.extend(move_result.errors)
                     except Exception as e:  # pragma: no cover - UI thread
                         errors.append(str(e))
 
-                    # Emit incremental progress
-                    self.signals.progress.emit(f"Progress: {idx}/{total}")
+                    # Calculate and display transfer speed
+                    elapsed = time.time() - start_time
+                    if elapsed > 0 and total_bytes > 0:
+                        speed_mbps = (total_bytes / (1024 * 1024)) / elapsed
+                        self.signals.status.emit(
+                            f"Processing {idx}/{total} - Speed: {speed_mbps:.2f} MB/s"
+                        )
 
                 self.signals.finished.emit({"moved": moved, "total": total, "errors": errors})
 
         worker = MoveWorker(move_specs)
-        worker.signals.progress.connect(progress.append_detail)
-        worker.signals.progress.connect(progress.set_status)
+        worker.signals.message.connect(progress.append_detail)
+        worker.signals.progress_value.connect(progress.set_progress)
+        worker.signals.status.connect(progress.set_status)
 
         def on_finished(summary: dict) -> None:
             moved = summary.get("moved", 0)
@@ -718,11 +870,20 @@ class MainWindow(QMainWindow):
             if selected_media_dir:
                 # Show only items from this media directory
                 for row in range(self.table.rowCount()):
-                    if 0 <= row < len(self.items):
-                        result = self.items[row]
-                        group = result.get("group")
-                        hide = not (group and group.directory == selected_media_dir)
-                        self.table.setRowHidden(row, hide)
+                    check_item = self.table.item(row, 0)
+                    if check_item:
+                        original_index = check_item.data(Qt.ItemDataRole.UserRole)
+                        if original_index is not None and 0 <= original_index < len(self.items):
+                            result = self.items[original_index]
+                            group = result.get("group")
+                            hide = not (group and group.directory == selected_media_dir)
+                            self.table.setRowHidden(row, hide)
+                        else:
+                            # Invalid index - hide the row
+                            self.table.setRowHidden(row, True)
+                    else:
+                        # No check item - hide the row
+                        self.table.setRowHidden(row, True)
 
     @Slot()
     def on_settings(self) -> None:
@@ -801,6 +962,7 @@ class MainWindow(QMainWindow):
         dialog = IdentifyDialog(self.provider_manager, initial_title, initial_type, self)
         if dialog.exec():
             result = dialog.get_result()
+            self.log_activity(f"Identification: Dialog returned result: {result}")
             if result and group_items:
                 # Update all items in the media group
                 for item_dict in group_items:
@@ -810,10 +972,24 @@ class MainWindow(QMainWindow):
                     if "id" in result:  # From provider
                         item.nfo = item.nfo or {}
                         item.nfo["tmdbid"] = str(result["id"])
-                        item.title = result.get("title", result.get("name", item.title))
+                        item.nfo["_source"] = "identification"  # Mark as from dialog, not NFO file
+
+                        # Store title in NFO for better confidence scoring
+                        title = result.get("title", result.get("name", item.title))
+                        item.title = title
+                        item.nfo["title"] = title
+
+                        # Store year in NFO if available
                         date = result.get("release_date", result.get("first_air_date", ""))
                         if date:
                             item.year = int(date[:4])
+                            item.nfo["year"] = item.year
+
+                        # Preserve episode title from source filename if present
+                        if item.kind == "episode":
+                            episode_title = self._extract_episode_title(item.source_path)
+                            if episode_title and "episode_title" not in item.nfo:
+                                item.nfo["episode_title"] = episode_title
                     else:  # Manual
                         item.title = result.get("title", item.title)
                         if result.get("year"):
@@ -839,10 +1015,70 @@ class MainWindow(QMainWindow):
                     )
                     item_dict["destination"] = new_dest
 
-                # Refresh display
+                identified_title = result.get("title") or result.get("name") or "Unknown"
+                self.log_activity(
+                    f"Identification: Updated {len(group_items)} items with '{identified_title}'"
+                )
+
+                # Refresh display - update both table and tree
+                self.log_activity(f"Identification: Refreshing table with {len(self.items)} items")
                 self.populate_table(self.items)
-                self.update_tree()
-                self.log_activity("Manual identification completed")
+
+                self.log_activity("Identification: Updating tree (preserve_selection=True)")
+                self.update_tree(preserve_selection=True)
+
+                self.log_activity(f"Identification: Completed for '{identified_title}'")
+
+    def _extract_episode_title(self, filepath: str) -> str | None:
+        """Extract episode title from filename if present."""
+        import re
+        from pathlib import Path
+
+        filename = Path(filepath).stem
+
+        # Look for pattern: Show - S01E02 - Episode Title
+        # After the SxxExx pattern, take everything after the next separator
+        match = re.search(r"[Ss]\d{1,2}[Ee]\d{1,4}\s*[-–]\s*(.+)$", filename)
+        if match:
+            title = match.group(1).strip()
+            # Clean up common artifacts
+            title = re.sub(r"\[.*?\]", "", title)  # Remove [tags]
+            title = re.sub(r"\(.*?\)", "", title)  # Remove (quality) tags
+            title = re.sub(r"\d{3,4}p", "", title, flags=re.IGNORECASE)  # Remove quality
+            title = title.strip(" .-_")
+            return title if title else None
+
+        return None
+
+    @Slot(int, int)
+    def on_table_double_click(self, row: int, column: int) -> None:
+        """Handle double-click on a table row to show details."""
+        # Get the original index from the first column's user data
+        check_item = self.table.item(row, 0)
+        if check_item:
+            original_index = check_item.data(Qt.ItemDataRole.UserRole)
+            self.log_activity(
+                f"Double-click: visual row={row}, original_index={original_index}, total items={len(self.items)}"
+            )
+            if original_index is not None and 0 <= original_index < len(self.items):
+                item_dict = self.items[original_index]
+                self.log_activity(
+                    f"Double-click: Opening details for '{item_dict['item'].source_path}'"
+                )
+                dialog = DetailsDialog(item_dict, self)
+                dialog.exec()
+
+                # If the file was deleted, remove it from the list and refresh
+                if dialog.file_deleted:
+                    self.log_activity(f"File deleted: {item_dict['item'].source_path}")
+                    self.items.pop(original_index)
+                    self.populate_table(self.items)
+                    self.update_tree()
+                    self.log_activity(f"Refreshed view - {len(self.items)} items remaining")
+            else:
+                self.log_activity(f"Double-click: ERROR - invalid index {original_index}")
+        else:
+            self.log_activity(f"Double-click: ERROR - no check_item at row {row}")
 
 
 def main() -> int:

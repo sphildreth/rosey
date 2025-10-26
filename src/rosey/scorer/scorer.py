@@ -48,21 +48,27 @@ class Scorer:
 
         # NFO-based scoring (highest confidence)
         if item.nfo:
+            # Check if this came from a real NFO file or from identification
+            nfo_source = item.nfo.get("_source", "file")  # Default to "file" for backward compat
+            nfo_label = "NFO" if nfo_source == "file" else "identification"
+
             if "imdbid" in item.nfo:
                 confidence += 50
-                reasons.append("IMDB ID from NFO")
+                reasons.append(f"IMDB ID from {nfo_label}")
             elif "tmdbid" in item.nfo:
                 confidence += 45
-                reasons.append("TMDB ID from NFO")
+                reasons.append(f"TMDB ID from {nfo_label}")
             elif "tvdbid" in item.nfo:
                 confidence += 40
-                reasons.append("TVDB ID from NFO")
+                reasons.append(f"TVDB ID from {nfo_label}")
 
         # Title confidence
         if item.title:
             if item.nfo and item.nfo.get("title"):
+                nfo_source = item.nfo.get("_source", "file")
+                nfo_label = "NFO" if nfo_source == "file" else "identification"
                 confidence += 20
-                reasons.append("Title from NFO")
+                reasons.append(f"Title from {nfo_label}")
             else:
                 confidence += 10
                 reasons.append("Title from filename")

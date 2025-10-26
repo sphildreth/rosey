@@ -17,18 +17,37 @@ class ProgressDialog(QDialog):
 
     cancel_requested = Signal()
 
-    def __init__(self, title: str = "Processing", parent: QWidget | None = None) -> None:
+    def __init__(
+        self, title: str = "Processing", parent: QWidget | None = None, dry_run: bool = False
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle(title)
         self.setModal(True)
         self.setMinimumWidth(500)
         self.setMinimumHeight(300)
         self._cancelled = False
+        self.dry_run = dry_run
         self.init_ui()
 
     def init_ui(self) -> None:
         """Initialize the UI."""
         layout = QVBoxLayout(self)
+
+        # Dry run warning banner (if applicable)
+        if self.dry_run:
+            warning_label = QLabel("⚠️ DRY RUN MODE - No files will be moved ⚠️")
+            warning_label.setStyleSheet(
+                "QLabel { "
+                "background-color: #ff9800; "
+                "color: white; "
+                "font-weight: bold; "
+                "font-size: 14pt; "
+                "padding: 10px; "
+                "border-radius: 5px; "
+                "}"
+            )
+            warning_label.setWordWrap(True)
+            layout.addWidget(warning_label)
 
         # Status label
         self.status_label = QLabel("Starting...")

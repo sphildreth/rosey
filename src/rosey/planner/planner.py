@@ -75,10 +75,17 @@ class Planner:
         if not self.movies_root:
             return item.source_path
 
-        # Build movie folder name: "Movie Title (Year)"
+        # Build movie folder name: "Movie Title (Year)" or "Movie Title (Year) [tmdbid-ID]"
         title = sanitize_name(item.title or "Unknown")
 
-        folder_name = f"{title} ({item.year})" if item.year else title
+        base_name = f"{title} ({item.year})" if item.year else title
+
+        # Add TMDB ID if available
+        if item.nfo and item.nfo.get("tmdbid"):
+            tmdbid = item.nfo["tmdbid"]
+            folder_name = f"{base_name} [tmdbid-{tmdbid}]"
+        else:
+            folder_name = base_name
 
         # Build filename
         ext = Path(item.source_path).suffix
@@ -87,7 +94,7 @@ class Planner:
 
         filename = sanitize_name(filename)
 
-        # Full path: movies_root/Movie Title (Year)/Movie Title (Year).ext
+        # Full path: movies_root/Movie Title (Year) [tmdbid-ID]/Movie Title (Year) [tmdbid-ID].ext
         return str(Path(self.movies_root) / folder_name / filename)
 
     def _plan_episode(self, item: MediaItem) -> str:
@@ -95,8 +102,14 @@ class Planner:
         if not self.tv_root:
             return item.source_path
 
-        # Show title
+        # Show title with optional year
         title = sanitize_name(item.title or "Unknown Show")
+        show_folder = f"{title} ({item.year})" if item.year else title
+
+        # Add TMDB ID if available
+        if item.nfo and item.nfo.get("tmdbid"):
+            tmdbid = item.nfo["tmdbid"]
+            show_folder = f"{show_folder} [tmdbid-{tmdbid}]"
 
         # Season folder (specials go to Season 00)
         season_num = item.season if item.season is not None else 0
@@ -133,8 +146,8 @@ class Planner:
 
         filename = sanitize_name(filename)
 
-        # Full path: tv_root/Show/Season NN/Show - S01E01.ext
-        return str(Path(self.tv_root) / title / season_folder / filename)
+        # Full path: tv_root/Show (Year) [tmdbid-ID]/Season NN/Show - S01E01.ext
+        return str(Path(self.tv_root) / show_folder / season_folder / filename)
 
 
 def sanitize_name(name: str) -> str:

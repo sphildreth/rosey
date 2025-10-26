@@ -70,6 +70,7 @@ class IdentifyDialog(QDialog):
         search_layout.addWidget(self.search_btn)
 
         self.results_list = QListWidget()
+        self.results_list.itemClicked.connect(self.on_result_clicked)
         self.results_list.itemDoubleClicked.connect(self.on_result_selected)
         search_layout.addWidget(self.results_list)
 
@@ -168,8 +169,8 @@ class IdentifyDialog(QDialog):
         # This method is kept for consistency but doesn't show/hide fields anymore
         pass
 
-    def on_result_selected(self, item: QListWidgetItem) -> None:
-        """Handle selection of a search result."""
+    def on_result_clicked(self, item: QListWidgetItem) -> None:
+        """Handle single-click selection of a search result."""
         self.selected_result = item.data(Qt.ItemDataRole.UserRole)
         if self.selected_result:
             # Pre-fill manual fields with selected result
@@ -181,6 +182,17 @@ class IdentifyDialog(QDialog):
             )
             if date:
                 self.manual_year.setText(date[:4])
+            print(
+                f"IdentifyDialog: Result clicked: {self.selected_result.get('title') or self.selected_result.get('name')}"
+            )
+
+    def on_result_selected(self, item: QListWidgetItem) -> None:
+        """Handle double-click selection of a search result."""
+        # First update the selection
+        self.on_result_clicked(item)
+        # Then accept the dialog
+        if self.selected_result:
+            self.accept()
 
     def get_result(self) -> dict:
         """Get the identification result."""
@@ -189,6 +201,7 @@ class IdentifyDialog(QDialog):
             # Return provider result
             result = self.selected_result.copy()
             result["type"] = "episode" if is_tv else "movie"
+            print(f"IdentifyDialog: Returning provider result: {result}")
             return result
         else:
             # Return manual entry
@@ -197,6 +210,7 @@ class IdentifyDialog(QDialog):
                 "year": self.manual_year.text(),
                 "type": "episode" if is_tv else "movie",
             }
+            print(f"IdentifyDialog: Returning manual result: {result}")
             # Note: season/episode are not included when identifying media groups
             # Individual episodes inherit show-level identification
             return result
