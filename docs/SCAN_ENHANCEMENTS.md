@@ -118,3 +118,23 @@ Implementation note: grouping occurs after file scan; the existing `Scanner` sta
 - Scanner (`rosey.scanner.Scanner`) remains file-based; grouping happens after scan.
 - Identifier already infers movie vs episode from filenames/NFO; group-level identification aggregates those signals.
 - Planner/Mover are reused as-is; destinations are still computed per `MediaItem`.
+
+## Examples
+
+### Show
+
+This show is named "Maude" and has 6 seasons and an "Extras" directory
+
+```
+Maude/
+├── Maude - Season 1
+│   ├── Maude - S01E01 - Maude's Problem (a.k.a.) Maude and the Psychiatrist.mp4
+├── Maude - Season 2
+│   ├── Maude - S02E04 - Maude's Facelift (1).mp4
+│   ├── Maude - S02E05 - Maude's Facelift (2).mp4
+├── Maude - Season 3
+├── Maude - Season 4
+├── Maude - Season 5
+├── Maude - Season 6
+└── Maude - Specials
+```
