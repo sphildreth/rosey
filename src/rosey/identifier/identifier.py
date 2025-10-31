@@ -1,9 +1,11 @@
 """Media identification from filenames and NFO files."""
 
 import logging
+import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from rosey.config import RoseyConfig, load_config
 from rosey.identifier.nfo import NFOData, find_nfo_for_file, parse_nfo
 from rosey.identifier.patterns import (
     clean_title,
@@ -25,14 +27,159 @@ logger = logging.getLogger(__name__)
 class Identifier:
     """Identifies media files from filesystem information."""
 
-    def __init__(self, prefer_nfo: bool = True):
+    def __init__(self, prefer_nfo: bool = True, config: RoseyConfig | None = None):
         """
         Initialize identifier.
 
         Args:
             prefer_nfo: Whether to prefer NFO data over filename parsing
+            config: Optional config to use instead of loading from disk
         """
         self.prefer_nfo = prefer_nfo
+        self.config = config if config is not None else load_config()
+
+        # Performance caches
+        self._duration_cache: dict[str, float | None] = {}
+        self._show_folder_cache: dict[str, bool] = {}
+        self._only_media_file_cache: dict[str, bool] = {}
+
+    def _should_check_duration(self) -> bool:
+        """Check if duration validation is enabled."""
+        return self.config.identification.minimum_movie_duration_minutes > 0
+
+    def _should_check_directory_constraints(self) -> bool:
+        """Check if directory constraints are enabled."""
+        return self.config.identification.movies_always_in_own_directory
+
+    def _get_video_duration_minutes(self, file_path: str) -> float | None:
+        """
+        Get video duration in minutes using ffprobe.
+
+        Args:
+            file_path: Path to video file
+
+        Returns:
+            Duration in minutes, or None if unable to determine
+        """
+        # Check cache first
+        if file_path in self._duration_cache:
+            return self._duration_cache[file_path]
+
+        try:
+            # Use ffprobe to get duration
+            result = subprocess.run(
+                [
+                    "ffprobe",
+                    "-v",
+                    "quiet",
+                    "-print_format",
+                    "json",
+                    "-show_format",
+                    file_path,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+
+            if result.returncode == 0:
+                import json
+
+                data = json.loads(result.stdout)
+                duration_str = data.get("format", {}).get("duration")
+                if duration_str:
+                    duration_seconds = float(duration_str)
+                    duration_minutes = duration_seconds / 60.0
+                    self._duration_cache[file_path] = duration_minutes
+                    return duration_minutes
+
+        except (
+            subprocess.TimeoutExpired,
+            subprocess.SubprocessError,
+            json.JSONDecodeError,
+            ValueError,
+        ) as e:
+            logger.debug(f"Failed to get duration for {file_path}: {e}")
+
+        # Cache None for failed lookups too
+        self._duration_cache[file_path] = None
+        return None
+
+    def _is_in_show_folder(self, file_path: str) -> bool:
+        """
+        Check if a file is located in a known TV show folder.
+
+        A show folder is identified by:
+        - Containing season subdirectories (Season X, SXX)
+        - Containing multiple episode files
+        - Having a parent that's a season directory
+        """
+        path = Path(file_path)
+        directory = path.parent
+        dir_path = str(directory)
+
+        # Check cache first
+        if dir_path in self._show_folder_cache:
+            return self._show_folder_cache[dir_path]
+
+        # Check if parent directory is a season folder
+        if extract_season_from_folder(directory.name):
+            self._show_folder_cache[dir_path] = True
+            return True
+
+        # Check if directory contains season subdirectories
+        try:
+            for item in directory.iterdir():
+                if item.is_dir() and extract_season_from_folder(item.name):
+                    self._show_folder_cache[dir_path] = True
+                    return True
+        except (OSError, PermissionError):
+            pass
+
+        # Check if directory contains multiple media files (potential episodes)
+        media_extensions = {".mkv", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m4v"}
+        media_files = []
+        try:
+            for item in directory.iterdir():
+                if item.is_file() and item.suffix.lower() in media_extensions:
+                    media_files.append(item)
+                    if len(media_files) >= 2:  # Multiple media files suggest TV show
+                        self._show_folder_cache[dir_path] = True
+                        return True
+        except (OSError, PermissionError):
+            pass
+
+        self._show_folder_cache[dir_path] = False
+        return False
+
+    def _is_only_media_file_in_directory(self, file_path: str) -> bool:
+        """
+        Check if the given file is the only media file in its directory.
+
+        Returns True if this is the only media file in the directory.
+        Child directories are allowed, but no other media files in the same directory.
+        """
+        path = Path(file_path)
+        directory = path.parent
+        dir_path = str(directory)
+
+        # Check cache first
+        if dir_path in self._only_media_file_cache:
+            return self._only_media_file_cache[dir_path]
+
+        media_extensions = {".mkv", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m4v"}
+
+        try:
+            for item in directory.iterdir():
+                if item.is_file() and item != path and item.suffix.lower() in media_extensions:
+                    self._only_media_file_cache[dir_path] = False
+                    return False  # Found another media file
+        except (OSError, PermissionError):
+            self._only_media_file_cache[dir_path] = True
+            return True  # If we can't read the directory, assume it's okay
+
+        self._only_media_file_cache[dir_path] = True
+        return True
 
     def identify(self, file_path: str) -> IdentificationResult:
         """
@@ -91,7 +238,32 @@ class Identifier:
             )
         elif nfo_data and (nfo_data.tmdb_id or nfo_data.imdb_id) and not nfo_data.season:
             # NFO with TMDB/IMDB ID but no season = movie
-            item = self._identify_movie(file_path, filename, nfo_data, reasons)
+            if self.config.identification.movies_always_in_own_directory:
+                if self._is_in_show_folder(file_path):
+                    reasons.append(
+                        "File in show folder - cannot be movie when movies_always_in_own_directory is enabled"
+                    )
+                    item = MediaItem(
+                        kind="unknown",
+                        source_path=file_path,
+                        title=clean_title(filename),
+                        nfo={},
+                    )
+                elif not self._is_only_media_file_in_directory(file_path):
+                    reasons.append(
+                        "Directory contains multiple media files - cannot be movie when movies_always_in_own_directory is enabled"
+                    )
+                    item = MediaItem(
+                        kind="unknown",
+                        source_path=file_path,
+                        title=clean_title(filename),
+                        nfo={},
+                    )
+                else:
+                    item = self._identify_movie(file_path, filename, nfo_data, reasons)
+                    reasons.append("NFO with TMDB/IMDB ID and directory constraints satisfied")
+            else:
+                item = self._identify_movie(file_path, filename, nfo_data, reasons)
         else:
             # Check if filename suggests it's a movie
             year = extract_year(filename) or extract_year(folder_name)
@@ -102,20 +274,217 @@ class Identifier:
             filename_lower = filename.lower()
             has_movie_keyword = any(keyword in filename_lower for keyword in movie_keywords)
 
+            # Determine if we need expensive checks
+            needs_duration_check = self._should_check_duration()
+            needs_directory_check = self._should_check_directory_constraints()
+
+            # Get duration only if needed
+            duration_minutes = None
+            if needs_duration_check:
+                duration_minutes = self._get_video_duration_minutes(file_path)
+                min_duration = self.config.identification.minimum_movie_duration_minutes
+
             if year or part or (nfo_data and nfo_data.year):
-                # Has year or part -> likely movie
-                item = self._identify_movie(file_path, filename, nfo_data, reasons)
+                # Has year or part -> likely movie, but check constraints if enabled
+                if needs_directory_check:
+                    if self._is_in_show_folder(file_path):
+                        reasons.append(
+                            "File in show folder - cannot be movie when movies_always_in_own_directory is enabled"
+                        )
+                        item = MediaItem(
+                            kind="unknown",
+                            source_path=file_path,
+                            title=clean_title(filename),
+                            nfo={},
+                        )
+                    elif not self._is_only_media_file_in_directory(file_path):
+                        reasons.append(
+                            "Directory contains multiple media files - cannot be movie when movies_always_in_own_directory is enabled"
+                        )
+                        item = MediaItem(
+                            kind="unknown",
+                            source_path=file_path,
+                            title=clean_title(filename),
+                            nfo={},
+                        )
+                    elif duration_minutes is not None and duration_minutes < min_duration:
+                        reasons.append(
+                            f"Duration {duration_minutes:.1f}min < {min_duration}min - not a movie"
+                        )
+                        item = MediaItem(
+                            kind="unknown",
+                            source_path=file_path,
+                            title=clean_title(filename),
+                            nfo={},
+                        )
+                        reasons.append("Short duration - classified as unknown")
+                    else:
+                        item = self._identify_movie(file_path, filename, nfo_data, reasons)
+                        if duration_minutes is not None:
+                            reasons.append(f"Duration {duration_minutes:.1f}min meets minimum")
+                        reasons.append("Directory constraints and duration satisfied")
+                elif (
+                    needs_duration_check
+                    and duration_minutes is not None
+                    and duration_minutes < min_duration
+                ):
+                    reasons.append(
+                        f"Duration {duration_minutes:.1f}min < {min_duration}min - not a movie"
+                    )
+                    item = MediaItem(
+                        kind="unknown",
+                        source_path=file_path,
+                        title=clean_title(filename),
+                        nfo={},
+                    )
+                    reasons.append("Short duration - classified as unknown")
+                else:
+                    item = self._identify_movie(file_path, filename, nfo_data, reasons)
+                    if duration_minutes is not None:
+                        reasons.append(f"Duration {duration_minutes:.1f}min meets minimum")
             elif nfo_data and nfo_data.title:
-                # Has NFO with title -> assume movie
-                item = self._identify_movie(file_path, filename, nfo_data, reasons)
+                # Has NFO with title -> assume movie, but check constraints if enabled
+                if needs_directory_check:
+                    if self._is_in_show_folder(file_path):
+                        reasons.append(
+                            "File in show folder - cannot be movie when movies_always_in_own_directory is enabled"
+                        )
+                        item = MediaItem(
+                            kind="unknown",
+                            source_path=file_path,
+                            title=clean_title(filename),
+                            nfo={},
+                        )
+                    elif not self._is_only_media_file_in_directory(file_path):
+                        reasons.append(
+                            "Directory contains multiple media files - cannot be movie when movies_always_in_own_directory is enabled"
+                        )
+                        item = MediaItem(
+                            kind="unknown",
+                            source_path=file_path,
+                            title=clean_title(filename),
+                            nfo={},
+                        )
+                    elif duration_minutes is not None and duration_minutes < min_duration:
+                        reasons.append(
+                            f"Duration {duration_minutes:.1f}min < {min_duration}min - not a movie"
+                        )
+                        item = self._identify_movie(file_path, filename, nfo_data, reasons)
+                        reasons.append("Short duration despite NFO title")
+                    else:
+                        item = self._identify_movie(file_path, filename, nfo_data, reasons)
+                        if duration_minutes is not None:
+                            reasons.append(f"Duration {duration_minutes:.1f}min meets minimum")
+                        reasons.append("Directory constraints and duration satisfied")
+                elif (
+                    needs_duration_check
+                    and duration_minutes is not None
+                    and duration_minutes < min_duration
+                ):
+                    reasons.append(
+                        f"Duration {duration_minutes:.1f}min < {min_duration}min - not a movie"
+                    )
+                    item = self._identify_movie(file_path, filename, nfo_data, reasons)
+                    reasons.append("Short duration despite NFO title")
+                else:
+                    item = self._identify_movie(file_path, filename, nfo_data, reasons)
+                    if duration_minutes is not None:
+                        reasons.append(f"Duration {duration_minutes:.1f}min meets minimum")
             elif has_movie_keyword:
                 # Has movie keyword -> assume movie
-                item = self._identify_movie(file_path, filename, nfo_data, reasons)
-                reasons.append("Movie keyword detected")
+                if needs_directory_check:
+                    if self._is_in_show_folder(file_path):
+                        reasons.append(
+                            "File in show folder - cannot be movie when movies_always_in_own_directory is enabled"
+                        )
+                        item = MediaItem(
+                            kind="unknown",
+                            source_path=file_path,
+                            title=clean_title(filename),
+                            nfo={},
+                        )
+                    elif not self._is_only_media_file_in_directory(file_path):
+                        reasons.append(
+                            "Directory contains multiple media files - cannot be movie when movies_always_in_own_directory is enabled"
+                        )
+                        item = MediaItem(
+                            kind="unknown",
+                            source_path=file_path,
+                            title=clean_title(filename),
+                            nfo={},
+                        )
+                    else:
+                        item = self._identify_movie(file_path, filename, nfo_data, reasons)
+                        reasons.append("Movie keyword detected and directory constraints satisfied")
+                else:
+                    item = self._identify_movie(file_path, filename, nfo_data, reasons)
+                    reasons.append("Movie keyword detected")
             else:
                 # Default to movie for unidentified video files without episode markers
-                item = self._identify_movie(file_path, filename, nfo_data, reasons)
-                reasons.append("No episode pattern - defaulting to movie")
+                # But check constraints if enabled
+                if needs_directory_check:
+                    if self._is_in_show_folder(file_path):
+                        reasons.append(
+                            "File in show folder - cannot be movie when movies_always_in_own_directory is enabled"
+                        )
+                        item = MediaItem(
+                            kind="unknown",
+                            source_path=file_path,
+                            title=clean_title(filename),
+                            nfo={},
+                        )
+                    elif not self._is_only_media_file_in_directory(file_path):
+                        reasons.append(
+                            "Directory contains multiple media files - cannot be movie when movies_always_in_own_directory is enabled"
+                        )
+                        item = MediaItem(
+                            kind="unknown",
+                            source_path=file_path,
+                            title=clean_title(filename),
+                            nfo={},
+                        )
+                    elif duration_minutes is not None and duration_minutes < min_duration:
+                        # Too short to be a movie, might be a clip/trailer/sample
+                        reasons.append(
+                            f"Duration {duration_minutes:.1f}min < {min_duration}min - not a movie"
+                        )
+                        # Classify as unknown instead of movie
+                        item = MediaItem(
+                            kind="unknown",
+                            source_path=file_path,
+                            title=clean_title(filename),
+                            nfo={},
+                        )
+                        reasons.append("Short duration - classified as unknown")
+                    else:
+                        item = self._identify_movie(file_path, filename, nfo_data, reasons)
+                        if duration_minutes is not None:
+                            reasons.append(f"Duration {duration_minutes:.1f}min meets minimum")
+                        reasons.append(
+                            "No episode pattern - defaulting to movie and directory constraints satisfied"
+                        )
+                elif (
+                    needs_duration_check
+                    and duration_minutes is not None
+                    and duration_minutes < min_duration
+                ):
+                    # Too short to be a movie, might be a clip/trailer/sample
+                    reasons.append(
+                        f"Duration {duration_minutes:.1f}min < {min_duration}min - not a movie"
+                    )
+                    # Classify as unknown instead of movie
+                    item = MediaItem(
+                        kind="unknown",
+                        source_path=file_path,
+                        title=clean_title(filename),
+                        nfo={},
+                    )
+                    reasons.append("Short duration - classified as unknown")
+                else:
+                    item = self._identify_movie(file_path, filename, nfo_data, reasons)
+                    if duration_minutes is not None:
+                        reasons.append(f"Duration {duration_minutes:.1f}min meets minimum")
+                    reasons.append("No episode pattern - defaulting to movie")
 
         return IdentificationResult(item=item, reasons=reasons, errors=errors)
 

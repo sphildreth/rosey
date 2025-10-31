@@ -81,6 +81,8 @@ class IdentificationConfig(BaseModel):
         default_factory=lambda: {"green": 70, "yellow": 40}
     )
     prefer_nfo_ids: bool = True
+    minimum_movie_duration_minutes: int = 60
+    movies_always_in_own_directory: bool = True
 
 
 class LoggingConfig(BaseModel):

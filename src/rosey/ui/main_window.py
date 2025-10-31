@@ -735,9 +735,6 @@ class MainWindow(QMainWindow):
                     except Exception:
                         file_size = 0
 
-                    # Update progress bar
-                    self.signals.progress_value.emit(idx, total)
-
                     try:
                         move_result = move_with_sidecars(
                             item,
@@ -755,6 +752,9 @@ class MainWindow(QMainWindow):
                             errors.extend(move_result.errors)
                     except Exception as e:  # pragma: no cover - UI thread
                         errors.append(str(e))
+
+                    # Update progress bar after each item completes
+                    self.signals.progress_value.emit(idx, total)
 
                     # Calculate and display transfer speed
                     elapsed = time.time() - start_time
