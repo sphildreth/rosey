@@ -8,6 +8,60 @@ from rosey.models import MediaItem
 
 logger = logging.getLogger(__name__)
 
+
+def title_case(text: str) -> str:
+    """
+    Title case a string, but don't capitalize common articles and prepositions.
+
+    Args:
+        text: Text to title case
+
+    Returns:
+        Title cased text
+    """
+    # Words that should not be capitalized (except at start)
+    lowercase_words = {
+        "a",
+        "an",
+        "and",
+        "as",
+        "at",
+        "but",
+        "by",
+        "for",
+        "if",
+        "in",
+        "nor",
+        "of",
+        "on",
+        "or",
+        "so",
+        "the",
+        "to",
+        "up",
+        "yet",
+    }
+
+    words = text.split()
+    if not words:
+        return text
+
+    # Capitalize first word
+    result = [words[0].capitalize()]
+
+    # Capitalize other words unless they're in lowercase_words
+    for word in words[1:]:
+        if word.lower() in lowercase_words:
+            result.append(word.lower())
+        else:
+            result.append(word.capitalize())
+
+    return " ".join(result)
+
+
+# Invalid filename characters for Windows (also good for Linux)
+INVALID_CHARS = r'<>:"/\|?*'
+
 # Windows reserved names
 WINDOWS_RESERVED = {
     "CON",
@@ -33,9 +87,6 @@ WINDOWS_RESERVED = {
     "LPT8",
     "LPT9",
 }
-
-# Invalid filename characters for Windows (also good for Linux)
-INVALID_CHARS = r'<>:"/\|?*'
 
 
 class Planner:
@@ -103,7 +154,8 @@ class Planner:
             return item.source_path
 
         # Show title with optional year
-        title = sanitize_name(item.title or "Unknown Show")
+        title = title_case(item.title or "Unknown Show")
+        title = sanitize_name(title)
         show_folder = f"{title} ({item.year})" if item.year else title
 
         # Add TMDB ID if available

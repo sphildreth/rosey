@@ -177,6 +177,7 @@ def _extract_episode_title_from_match(filename: str, after_pos: int) -> str | No
     title = re.sub(
         r"\b(?:WEB-?DL|HDTV|BluRay|x264|x265|HEVC|10bit)\b", "", title, flags=re.IGNORECASE
     )
+    title = re.sub(r"\([^)]*\)", "", title)  # Remove parentheses
     title = title.strip(" .-_")
 
     return title if title else None

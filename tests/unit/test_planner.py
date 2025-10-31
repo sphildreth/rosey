@@ -244,6 +244,25 @@ class TestPlannerTVShows:
         # Should return original path
         assert dest == "/source/file.mkv"
 
+    def test_episode_all_in_the_family_s6e9(self):
+        """Test specific episode destination for 'All in the Family' S6E9."""
+        planner = Planner(tv_root="/mnt/fileserver_storage/videos/tv")
+
+        item = MediaItem(
+            kind="episode",
+            source_path="/mnt/fileserver_incoming/complete/All in the family (1971) [tmdbid-1922]/All in the family (Archie Bunker US TV Series) S6EP09 Grandpa blues (moviesbyrizzo).mp4",
+            title="All in the family",
+            year=1971,
+            season=6,
+            episodes=[9],
+            nfo={"tmdbid": "1922", "episode_title": "Grandpa blues"},
+        )
+
+        dest = planner.plan_destination(item)
+
+        expected = "/mnt/fileserver_storage/videos/tv/All in the Family (1971) [tmdbid-1922]/Season 06/All in the Family - S06E09 - Grandpa blues.mp4"
+        assert dest == expected
+
 
 class TestPlannerUnknown:
     """Test unknown media handling."""
