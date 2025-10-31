@@ -39,6 +39,11 @@ EPISODE_PATTERNS = [
         r"(?P<season>\d{1,2})x(?P<ep1>\d{1,4})(?:[ ._\-]*-[ ._\-]*(?P<ep2>\d{1,4}))?",
         re.IGNORECASE,
     ),
+    # S01EP02 or S01 EP02 (EP instead of E, allow separators)
+    re.compile(
+        r"[Ss](?P<season>\d{1,2})[ ._\-]*[Ee][Pp](?P<ep1>\d{1,4})(?:[ ._\-]*-?[ ._\-]*[Ee][Pp](?P<ep2>\d{1,4}))?",
+        re.IGNORECASE,
+    ),
 ]
 
 # Date patterns (YYYY-MM-DD, YYYY.MM.DD, etc.)

@@ -260,9 +260,10 @@ def test_tvdb_request_token_refresh(tvdb_provider):
     # Mock data response
     data_response = {"data": {"test": "data"}}
 
-    with patch.object(tvdb_provider._client, "post") as mock_post, patch.object(
-        tvdb_provider._client, "get"
-    ) as mock_get:
+    with (
+        patch.object(tvdb_provider._client, "post") as mock_post,
+        patch.object(tvdb_provider._client, "get") as mock_get,
+    ):
         # Login mock
         login_resp = MagicMock()
         login_resp.json.return_value = login_response
