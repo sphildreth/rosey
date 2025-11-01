@@ -43,6 +43,55 @@ from rosey.ui.settings_dialog import SettingsDialog
 MoverPolicy = Literal["skip", "replace", "keep_both"]
 
 
+# Language mapping for companion files
+# Maps common language names to ISO language codes with region
+LANGUAGE_NAME_TO_CODE = {
+    "english": "en_us",
+    "spanish": "es_es",
+    "french": "fr_fr",
+    "german": "de_de",
+    "italian": "it_it",
+    "portuguese": "pt_pt",
+    "russian": "ru_ru",
+    "japanese": "ja_jp",
+    "korean": "ko_kr",
+    "chinese": "zh_cn",
+    "arabic": "ar_sa",
+    "hindi": "hi_in",
+    # Add more as needed
+}
+
+
+def extract_language_from_companion_filename(filename: str) -> str | None:
+    """
+    Extract language name from companion filename.
+
+    Examples:
+        "English.srt" -> "english"
+        "Spanish.ass" -> "spanish"
+        "movie.srt" -> None (no language detected)
+    """
+    from pathlib import Path
+
+    stem = Path(filename).stem.lower()
+
+    # Check if the entire stem is a known language name
+    if stem in LANGUAGE_NAME_TO_CODE:
+        return stem
+
+    # Check for language prefixes (e.g., "English.subtitles.srt" -> "english")
+    for lang_name in LANGUAGE_NAME_TO_CODE:
+        if stem.startswith(lang_name + ".") or stem.startswith(lang_name + "_"):
+            return lang_name
+
+    return None
+
+
+def get_language_code_from_name(language_name: str) -> str:
+    """Convert language name to language code."""
+    return LANGUAGE_NAME_TO_CODE.get(language_name.lower(), language_name.lower())
+
+
 class ScanWorker(QRunnable):
     """Background worker for scanning."""
 
@@ -176,8 +225,30 @@ class ScanWorker(QRunnable):
                                 and cast(MediaItem, result["item"]).kind != "companion"
                             ):
                                 primary_dest_dir = Path(cast(str, result["destination"])).parent
+                                primary_dest_stem = Path(cast(str, result["destination"])).stem
+
+                                # Extract language from companion filename
                                 companion_filename = Path(companion_path).name
-                                companion_destination = str(primary_dest_dir / companion_filename)
+                                language_name = extract_language_from_companion_filename(
+                                    companion_filename
+                                )
+                                language_code = (
+                                    get_language_code_from_name(language_name)
+                                    if language_name
+                                    else ""
+                                )
+
+                                # Build companion destination: primary_base.language_code.ext
+                                companion_ext = Path(companion_path).suffix
+                                if language_code:
+                                    companion_dest_name = (
+                                        f"{primary_dest_stem}.{language_code}{companion_ext}"
+                                    )
+                                else:
+                                    # Fallback: use primary base name with companion extension
+                                    companion_dest_name = f"{primary_dest_stem}{companion_ext}"
+
+                                companion_destination = str(primary_dest_dir / companion_dest_name)
                                 break
 
                         items.append(
@@ -1364,13 +1435,46 @@ class MainWindow(QMainWindow):
                     new_score = score_identification(ident)
                     item_dict["score"] = new_score
 
-                    # Re-plan destination
-                    new_dest = plan_path(
-                        item,
-                        movies_root=self.config.paths.movies,
-                        tv_root=self.config.paths.tv,
-                    )
-                    item_dict["destination"] = new_dest
+                    # Re-plan destination (skip for companions - they keep their calculated destinations)
+                    if item.kind != "companion":
+                        new_dest = plan_path(
+                            item,
+                            movies_root=self.config.paths.movies,
+                            tv_root=self.config.paths.tv,
+                        )
+                        item_dict["destination"] = new_dest
+                    else:
+                        # For companions, recalculate destination based on updated primary video
+                        # Find the primary video in the same group
+                        for primary_dict in group_items:
+                            primary_item = primary_dict["item"]
+                            if primary_item.kind != "companion":
+                                primary_dest_dir = Path(primary_dict["destination"]).parent
+                                primary_dest_stem = Path(primary_dict["destination"]).stem
+
+                                # Extract language from companion filename
+                                companion_filename = Path(item.source_path).name
+                                language_name = extract_language_from_companion_filename(
+                                    companion_filename
+                                )
+                                language_code = (
+                                    get_language_code_from_name(language_name)
+                                    if language_name
+                                    else ""
+                                )
+
+                        # Build companion destination: primary_base.language_code.ext
+                        companion_ext = Path(item.source_path).suffix
+                        if language_code:
+                            companion_dest_name = (
+                                f"{primary_dest_stem}.{language_code}{companion_ext}"
+                            )
+                        else:
+                            # Fallback: use primary base name with companion extension
+                            companion_dest_name = f"{primary_dest_stem}{companion_ext}"
+
+                        item_dict["destination"] = str(primary_dest_dir / companion_dest_name)
+                        break
 
                 identified_title = result.get("title") or result.get("name") or "Unknown"
                 self.log_activity(

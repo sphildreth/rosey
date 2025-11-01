@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -41,9 +42,9 @@ class DetailsDialog(QDialog):
 
         self.setWindowTitle("Media Item Details")
         self.setModal(True)
-        self.resize(800, 700)
+        self.resize(1000, 800)  # Increased width for better text display
         # Make dialog resizable
-        self.setMinimumSize(600, 500)
+        self.setMinimumSize(700, 600)
 
         self.init_ui()
 
@@ -54,6 +55,7 @@ class DetailsDialog(QDialog):
         # Basic Information
         basic_group = QGroupBox("Basic Information")
         basic_layout = QVBoxLayout(basic_group)
+        basic_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
 
         self._add_info_row(basic_layout, "Type:", self.item.kind.upper())
         self._add_info_row(basic_layout, "Title:", self.item.title or "Unknown")
@@ -95,6 +97,7 @@ class DetailsDialog(QDialog):
         # File Information
         file_group = QGroupBox("File Information")
         file_layout = QVBoxLayout(file_group)
+        file_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
 
         self._add_info_row(file_layout, "Source Path:", self.item.source_path)
         self._add_info_row(file_layout, "Destination:", self.destination)
@@ -109,6 +112,7 @@ class DetailsDialog(QDialog):
         if self.item.nfo:
             metadata_group = QGroupBox("Metadata")
             metadata_layout = QVBoxLayout(metadata_group)
+            metadata_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
 
             for key, value in self.item.nfo.items():
                 if value:
@@ -119,6 +123,7 @@ class DetailsDialog(QDialog):
         # Confidence Score
         score_group = QGroupBox("Confidence Score")
         score_layout = QVBoxLayout(score_group)
+        score_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
 
         confidence_label = QLabel(f"<b>Confidence: {self.score.confidence}%</b>")
         confidence_label.setStyleSheet(self._get_confidence_color(self.score.confidence))
@@ -140,6 +145,7 @@ class DetailsDialog(QDialog):
         if self.group:
             group_group = QGroupBox("Media Group")
             group_layout = QVBoxLayout(group_group)
+            group_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
 
             self._add_info_row(group_layout, "Directory:", self.group.directory)
             self._add_info_row(group_layout, "Group Type:", self.group.kind)
@@ -179,6 +185,9 @@ class DetailsDialog(QDialog):
         value_widget.setWordWrap(True)
         value_widget.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         value_widget.setStyleSheet("QLabel { padding-left: 10px; padding-bottom: 8px; }")
+        # Ensure the label can expand to show all text
+        value_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        value_widget.setMinimumWidth(200)  # Give minimum width for wrapping
         layout.addWidget(value_widget)
 
     def _get_confidence_color(self, confidence: int) -> str:
