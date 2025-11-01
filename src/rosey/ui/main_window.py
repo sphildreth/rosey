@@ -155,6 +155,7 @@ class ScanWorker(QRunnable):
         progress = Signal(str)
         progress_value = Signal(int, int)
         finished = Signal(list)
+        file_processed = Signal(str, float, float)  # filename, size_mb, processing_time_sec
 
     def __init__(
         self,
@@ -230,6 +231,18 @@ class ScanWorker(QRunnable):
 
             def process_video(video_path: str, group) -> dict:
                 """Process a single video file."""
+                import time
+                from pathlib import Path
+
+                start_time = time.time()
+
+                # Get file size
+                try:
+                    file_size = Path(video_path).stat().st_size
+                    size_mb = file_size / (1024 * 1024)  # Convert to MB
+                except Exception:
+                    size_mb = 0.0
+
                 ident_result = identifier.identify(video_path)
                 score = score_identification(ident_result)
                 destination = plan_path(
@@ -237,6 +250,13 @@ class ScanWorker(QRunnable):
                     movies_root=self.movies_root,
                     tv_root=self.tv_root,
                 )
+
+                processing_time = time.time() - start_time
+
+                # Emit statistics for this file
+                filename = Path(video_path).name
+                self.signals.file_processed.emit(filename, size_mb, processing_time)
+
                 return {
                     "item": ident_result.item,
                     "score": score,
@@ -842,6 +862,7 @@ class MainWindow(QMainWindow):
         worker.signals.progress.connect(self.on_scan_progress)
         worker.signals.progress_value.connect(progress.set_progress)
         worker.signals.progress.connect(progress.set_status)
+        worker.signals.file_processed.connect(progress.add_file_stats)
         worker.signals.finished.connect(self.on_scan_finished)
 
         # Connect progress dialog cancel to worker
@@ -874,7 +895,6 @@ class MainWindow(QMainWindow):
             was_cancelled = (
                 self._scan_cancelled["flag"] if hasattr(self, "_scan_cancelled") else False
             )
-            self._scan_progress.set_complete(success=not was_cancelled)
 
             if was_cancelled:
                 self.log_activity("Scan cancelled by user")
@@ -883,9 +903,23 @@ class MainWindow(QMainWindow):
                 self.items = items
                 self.populate_table(items)
                 self.update_tree()
-                self.log_activity(f"Scan completed - {len(items)} items")
-                self.statusBar().showMessage("Scan completed")
 
+                # Log detailed statistics
+                total_files = self._scan_progress._total_files
+                total_size = self._scan_progress._total_size_mb
+                total_time = self._scan_progress._total_time_sec
+                avg_time = total_time / total_files if total_files > 0 else 0.0
+
+                stats_msg = (
+                    f"Scan completed - {len(items)} items "
+                    f"({total_files} files processed, "
+                    f"{total_size:.1f} MB, "
+                    f"{avg_time:.3f}s avg per file)"
+                )
+                self.log_activity(stats_msg)
+                self.statusBar().showMessage(f"Scan completed - {len(items)} items")
+
+            self._scan_progress.set_complete(success=not was_cancelled)
             self.btn_scan.setEnabled(True)
 
             # Clean up references
@@ -1056,6 +1090,16 @@ class MainWindow(QMainWindow):
                         self.signals.status.emit(
                             f"Processing {idx}/{total} - Speed: {speed_mbps:.2f} MB/s"
                         )
+
+                # Send final status update
+                elapsed = time.time() - start_time
+                if elapsed > 0 and total_bytes > 0:
+                    speed_mbps = (total_bytes / (1024 * 1024)) / elapsed
+                    self.signals.status.emit(
+                        f"Completed {moved}/{total} items - Average speed: {speed_mbps:.2f} MB/s"
+                    )
+                else:
+                    self.signals.status.emit(f"Completed {moved}/{total} items")
 
                 self.signals.finished.emit(
                     {

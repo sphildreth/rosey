@@ -107,8 +107,10 @@ def test_on_identify_updates_companion_destinations():
         assert movie_item.nfo["tmdbid"] == "604"
 
         # Verify companion destination was updated to match new primary destination
+        # Subtitle files default to en_us language code
         assert (
-            companion_dict["destination"] == "/movies/New Title (2003) [tmdbid-604]/New Title.srt"
+            companion_dict["destination"]
+            == "/movies/New Title (2003) [tmdbid-604]/New Title.en_us.srt"
         )
         assert companion_item.title == "The Matrix Reloaded"  # Title still gets updated
         assert companion_item.year == 2003  # Year still gets updated
