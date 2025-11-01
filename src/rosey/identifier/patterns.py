@@ -49,6 +49,21 @@ EPISODE_PATTERNS = [
         r"[Ss]eason[ ._\-]*(?P<season>\d{1,2})[ ._\-]*[Ee][Pp](?P<ep1>\d{1,4})(?:[ ._\-]*-?[ ._\-]*[Ee][Pp](?P<ep2>\d{1,4}))?",
         re.IGNORECASE,
     ),
+    # Episode XX format (Episode 13, Episode 01, etc.)
+    re.compile(
+        r"[Ee]pisode[ ._\-]*(?P<ep1>\d{1,4})(?:[ ._\-]*-?[ ._\-]*[Ee]pisode[ ._\-]*(?P<ep2>\d{1,4}))?",
+        re.IGNORECASE,
+    ),
+    # Episode number at start of filename (01 Title, 05 Title, etc.) - only use when season is known from directory
+    re.compile(
+        r"^(?P<ep1>\d{1,3})[ ._\-]",
+        re.IGNORECASE,
+    ),
+    # Dash-separated season-episode (1-2, 02-15, etc.) - only use when season is known from directory
+    re.compile(
+        r"(?P<season>\d{1,2})-(?P<ep1>\d{1,4})(?:-(?P<ep2>\d{1,4}))?",
+        re.IGNORECASE,
+    ),
 ]
 
 # Date patterns (YYYY-MM-DD, YYYY.MM.DD, etc.)
@@ -88,6 +103,14 @@ def extract_title_before_episode(filename: str) -> str:
     Returns:
         Title portion before episode marker
     """
+    # Check for date pattern first (to avoid confusion with dash episode patterns)
+    match = DATE_PATTERN.search(filename)
+    if match:
+        title_part = filename[: match.start()]
+        # Remove trailing separators
+        title_part = re.sub(r"[\s\-\u2013\u2014]+$", "", title_part)
+        return title_part
+
     # Find the first episode pattern match
     for pattern in EPISODE_PATTERNS:
         match = pattern.search(filename)
@@ -98,21 +121,17 @@ def extract_title_before_episode(filename: str) -> str:
             title_part = re.sub(r"[\s\-\u2013\u2014]+$", "", title_part)
             return title_part
 
-    # If no episode pattern, check for date pattern
-    match = DATE_PATTERN.search(filename)
-    if match:
-        return filename[: match.start()]
-
     # No pattern found, return full filename
     return filename
 
 
-def extract_episode_info(filename: str) -> EpisodeMatch | None:
+def extract_episode_info(filename: str, known_season: int | None = None) -> EpisodeMatch | None:
     """
     Extract episode information from filename.
 
     Args:
         filename: Filename to parse
+        known_season: Season number known from directory context (optional)
 
     Returns:
         EpisodeMatch if found, None otherwise
@@ -120,7 +139,16 @@ def extract_episode_info(filename: str) -> EpisodeMatch | None:
     for pattern in EPISODE_PATTERNS:
         match = pattern.search(filename)
         if match:
-            season = int(match.group("season"))
+            # Handle patterns that have a season group
+            if "season" in match.groupdict() and match.group("season"):
+                season = int(match.group("season"))
+            elif known_season is not None:
+                # For patterns without season (like "Episode XX"), use known_season
+                season = known_season
+            else:
+                # Pattern requires season but none available
+                continue
+
             ep1 = int(match.group("ep1"))
             episodes = [ep1]
 
@@ -133,10 +161,20 @@ def extract_episode_info(filename: str) -> EpisodeMatch | None:
                 else:
                     episodes.append(ep2)
 
-            # Extract episode title if present after the episode marker
-            episode_title = _extract_episode_title_from_match(filename, match.end())
+            # For dash-separated format (season-episode), only use if season is known from directory
+            if pattern == EPISODE_PATTERNS[-1] and (known_season is None or season != known_season):
+                continue  # Skip this pattern if season not known or doesn't match
 
-            return EpisodeMatch(season=season, episodes=episodes, title=episode_title)
+            # For episode-at-start pattern, only use if season is known from directory
+            if pattern == EPISODE_PATTERNS[-2] and known_season is None:
+                continue  # Skip this pattern if season not known
+
+            # Extract episode title if present
+            title = None
+            if match:
+                title = _extract_episode_title_from_match(filename, match.end())
+
+            return EpisodeMatch(season=season, episodes=episodes, title=title)
 
     return None
 
@@ -371,10 +409,6 @@ def clean_title(title: str, extracted_year: int | None = None) -> str:
         if not re.match(r"^\d{4}$", content) and content.strip():
             preserved_parens.append(f"({content})")
 
-    # Remove episode patterns
-    for pattern in EPISODE_PATTERNS:
-        title = pattern.sub("", title)
-
     # Remove date patterns
     title = DATE_PATTERN.sub("", title)
 
@@ -387,6 +421,13 @@ def clean_title(title: str, extracted_year: int | None = None) -> str:
     # Remove common separators and clean up (convert to spaces) - do this early
     # Convert dots, underscores, hyphens, and em-dashes to spaces
     title = re.sub(r"[._\-\u2013\u2014]+", " ", title)
+
+    # Remove episode patterns AFTER separator conversion to avoid removing legitimate title content
+    # Skip the episode-at-start pattern as it's only for identification, not cleaning
+    for i, pattern in enumerate(EPISODE_PATTERNS):
+        if i == len(EPISODE_PATTERNS) - 2:  # Skip episode-at-start pattern
+            continue
+        title = pattern.sub("", title)
 
     # Now remove standalone year (but only after converting separators to spaces)
     # Only remove the extracted year, not other year-like numbers that might be part of the title

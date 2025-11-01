@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 
 from rosey.config import get_config_path, load_config, save_config
 from rosey.grouper import build_media_groups
+from rosey.grouper.grouper import MediaGroup
 from rosey.models import IdentificationResult
 from rosey.mover import move_with_sidecars
 from rosey.planner import plan_path
@@ -229,7 +230,7 @@ class ScanWorker(QRunnable):
             config = load_config()
             identifier = Identifier(prefer_nfo=True, config=config, skip_duration=True)
 
-            def process_video(video_path: str, group) -> dict:
+            def process_video(video_path: str, group: MediaGroup) -> dict:
                 """Process a single video file."""
                 import time
                 from pathlib import Path

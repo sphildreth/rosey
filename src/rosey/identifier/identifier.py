@@ -283,7 +283,11 @@ class Identifier:
                 parent_folder
             )
             if season:
-                episode_info = extract_episode_info(folder_name)
+                # Try filename again with known season (for dash patterns)
+                episode_info = extract_episode_info(filename, known_season=season)
+                if not episode_info:
+                    # Try folder name as fallback
+                    episode_info = extract_episode_info(folder_name)
 
         # Check for date-based episode
         date_info = extract_date(filename)
