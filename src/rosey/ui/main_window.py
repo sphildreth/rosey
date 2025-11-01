@@ -1394,8 +1394,6 @@ class MainWindow(QMainWindow):
             return
 
         item = selected[0]
-        item_text = item.text(0)
-        self.log_activity(f"Tree selection: {item_text}")
 
         # Check if it's a top level
         if item.parent() is None:
