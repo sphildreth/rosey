@@ -27,7 +27,6 @@ from PySide6.QtWidgets import (
 
 from rosey.config import get_config_path, load_config, save_config
 from rosey.grouper import build_media_groups
-from rosey.identifier import identify_file
 from rosey.models import IdentificationResult
 from rosey.mover import move_with_sidecars
 from rosey.planner import plan_path
@@ -47,29 +46,79 @@ MoverPolicy = Literal["skip", "replace", "keep_both"]
 # Maps common language names to ISO language codes with region
 LANGUAGE_NAME_TO_CODE = {
     "english": "en_us",
+    "eng": "en_us",
+    "en": "en_us",
     "spanish": "es_es",
+    "esp": "es_es",
+    "es": "es_es",
     "french": "fr_fr",
+    "fra": "fr_fr",
+    "fr": "fr_fr",
     "german": "de_de",
+    "ger": "de_de",
+    "de": "de_de",
     "italian": "it_it",
+    "ita": "it_it",
+    "it": "it_it",
     "portuguese": "pt_pt",
+    "por": "pt_pt",
+    "pt": "pt_pt",
     "russian": "ru_ru",
+    "rus": "ru_ru",
+    "ru": "ru_ru",
     "japanese": "ja_jp",
+    "jpn": "ja_jp",
+    "ja": "ja_jp",
     "korean": "ko_kr",
+    "kor": "ko_kr",
+    "ko": "ko_kr",
     "chinese": "zh_cn",
+    "chi": "zh_cn",
+    "zh": "zh_cn",
     "arabic": "ar_sa",
+    "ara": "ar_sa",
+    "ar": "ar_sa",
     "hindi": "hi_in",
+    "hin": "hi_in",
+    "hi": "hi_in",
+    "bulgarian": "bg_bg",
+    "bul": "bg_bg",
+    "bg": "bg_bg",
     # Add more as needed
 }
 
+# All supported subtitle formats
+SUBTITLE_EXTENSIONS = {
+    ".srt",  # SubRip Text
+    ".ssa",  # SubStation Alpha
+    ".ass",  # Advanced SubStation Alpha
+    ".vtt",  # WebVTT
+    ".sub",  # VobSub / SubViewer / MicroDVD
+    ".idx",  # VobSub index
+    ".sbv",  # SubViewer
+    ".lrc",  # LRC (Lyric file)
+    ".smi",  # SAMI format
+    ".stl",  # Spruce subtitle file
+}
 
-def extract_language_from_companion_filename(filename: str) -> str | None:
+
+def is_subtitle_file(filepath: str) -> bool:
+    """Check if a file is a subtitle file based on extension."""
+    return Path(filepath).suffix.lower() in SUBTITLE_EXTENSIONS
+
+
+def extract_language_from_companion_filename(filename: str, filepath: str = "") -> str | None:
     """
     Extract language name from companion filename.
+
+    For subtitle files without a recognizable language, returns "en_us" as default.
+    For non-subtitle files without a language, returns None.
 
     Examples:
         "English.srt" -> "english"
         "Spanish.ass" -> "spanish"
-        "movie.srt" -> None (no language detected)
+        "movie.srt" -> "english" (subtitle without language defaults to en_us)
+        "poster.jpg" -> None (non-subtitle without language)
     """
     from pathlib import Path
 
@@ -83,6 +132,11 @@ def extract_language_from_companion_filename(filename: str) -> str | None:
     for lang_name in LANGUAGE_NAME_TO_CODE:
         if stem.startswith(lang_name + ".") or stem.startswith(lang_name + "_"):
             return lang_name
+
+    # If this is a subtitle file and no language was detected, default to "english"
+    # This ensures subtitles always have a language code in the destination filename
+    if is_subtitle_file(filepath or filename):
+        return "english"
 
     return None
 
@@ -162,41 +216,73 @@ class ScanWorker(QRunnable):
                 self.signals.progress.emit("Scan cancelled")
                 return
 
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            from rosey.config import load_config
+            from rosey.identifier import Identifier
+
             items = []
-            total_groups = len(groups)
-            for idx, group in enumerate(groups, start=1):
+
+            # Create a shared identifier instance with config
+            # Skip duration checks during scan for performance - user can verify manually later
+            config = load_config()
+            identifier = Identifier(prefer_nfo=True, config=config, skip_duration=True)
+
+            def process_video(video_path: str, group) -> dict:
+                """Process a single video file."""
+                ident_result = identifier.identify(video_path)
+                score = score_identification(ident_result)
+                destination = plan_path(
+                    ident_result.item,
+                    movies_root=self.movies_root,
+                    tv_root=self.tv_root,
+                )
+                return {
+                    "item": ident_result.item,
+                    "score": score,
+                    "destination": destination,
+                    "group": group,
+                }
+
+            # Use thread pool for parallel processing
+            with ThreadPoolExecutor(max_workers=min(8, len(groups) * 2)) as executor:
+                # Submit all videos for processing
+                futures = []
+                for group in groups:
+                    for video_path in group.primary_videos:
+                        future = executor.submit(process_video, video_path, group)
+                        futures.append(future)
+
+                # Collect results as they complete
+                completed = 0
+                total_videos = len(futures)
+                for future in as_completed(futures):
+                    if self.is_cancelled():
+                        self.signals.progress.emit("Scan cancelled")
+                        # Cancel remaining futures
+                        for f in futures:
+                            f.cancel()
+                        return
+
+                    try:
+                        result = future.result()
+                        items.append(result)
+                        completed += 1
+
+                        # Update progress
+                        progress_percent = 25 + int((completed / total_videos) * 50)  # 25-75%
+                        self.signals.progress.emit(
+                            f"Processing videos... ({completed}/{total_videos})"
+                        )
+                        self.signals.progress_value.emit(progress_percent, 100)
+                    except Exception as e:
+                        self.signals.progress.emit(f"Error processing video: {e}")
+
+            # Now process groups for companions
+            for group in groups:
                 if self.is_cancelled():
                     self.signals.progress.emit("Scan cancelled")
                     return
-
-                progress_percent = 25 + int((idx / total_groups) * 50)  # 25-75%
-                self.signals.progress.emit(
-                    f"Processing {group.directory}... ({idx}/{total_groups})"
-                )
-                self.signals.progress_value.emit(progress_percent, 100)
-
-                for video_path in group.primary_videos:
-                    # Identify
-                    ident_result = identify_file(video_path)
-
-                    # Score
-                    score = score_identification(ident_result)
-
-                    # Plan destination using configured roots
-                    destination = plan_path(
-                        ident_result.item,
-                        movies_root=self.movies_root,
-                        tv_root=self.tv_root,
-                    )
-
-                    items.append(
-                        {
-                            "item": ident_result.item,
-                            "score": score,
-                            "destination": destination,
-                            "group": group,  # Keep reference to the group
-                        }
-                    )
 
                 # Add companion files as separate items
                 for _primary_base, companion_paths in group.companions.items():
@@ -227,10 +313,10 @@ class ScanWorker(QRunnable):
                                 primary_dest_dir = Path(cast(str, result["destination"])).parent
                                 primary_dest_stem = Path(cast(str, result["destination"])).stem
 
-                                # Extract language from companion filename
+                                # Extract language from companion filename (pass filepath for subtitle detection)
                                 companion_filename = Path(companion_path).name
                                 language_name = extract_language_from_companion_filename(
-                                    companion_filename
+                                    companion_filename, filepath=companion_path
                                 )
                                 language_code = (
                                     get_language_code_from_name(language_name)
@@ -1452,10 +1538,10 @@ class MainWindow(QMainWindow):
                                 primary_dest_dir = Path(primary_dict["destination"]).parent
                                 primary_dest_stem = Path(primary_dict["destination"]).stem
 
-                                # Extract language from companion filename
+                                # Extract language from companion filename (pass filepath for subtitle detection)
                                 companion_filename = Path(item.source_path).name
                                 language_name = extract_language_from_companion_filename(
-                                    companion_filename
+                                    companion_filename, filepath=item.source_path
                                 )
                                 language_code = (
                                     get_language_code_from_name(language_name)

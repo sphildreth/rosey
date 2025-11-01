@@ -64,11 +64,20 @@ class Scanner:
             logger.warning(f"No files found in {root_path}")
             return results
 
+        # Filter video files immediately to reduce processing
+        video_paths = [
+            path for path in paths_to_scan if Path(path).suffix.lower() in VIDEO_EXTENSIONS
+        ]
+
+        logger.info(f"Found {len(video_paths)} video files out of {len(paths_to_scan)} total files")
+
+        if not video_paths:
+            logger.warning(f"No video files found in {root_path}")
+            return results
+
         # Process paths concurrently
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            future_to_path = {
-                executor.submit(self._scan_path, path): path for path in paths_to_scan
-            }
+            future_to_path = {executor.submit(self._scan_path, path): path for path in video_paths}
 
             for future in as_completed(future_to_path):
                 try:
@@ -80,7 +89,7 @@ class Scanner:
                     logger.error(f"Error scanning {path}: {e}")
                     results.append(ScanResult(path, False, error=str(e)))
 
-        logger.info(f"Scanned {len(results)} files from {root_path}")
+        logger.info(f"Scanned {len(results)} video files from {root_path}")
         return results
 
     def _enumerate_paths(self, root_path: str) -> Iterator[str]:
@@ -105,6 +114,7 @@ class Scanner:
             return
 
         try:
+            # Use rglob for recursive scanning which is more efficient
             for entry in root.rglob("*"):
                 if not self.follow_symlinks and entry.is_symlink():
                     continue

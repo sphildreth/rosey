@@ -70,7 +70,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["N802"]  # allow function names like test_ClassName_methodName
+"tests/**/*.py" = ["N802", "E402"]  # allow function names like test_ClassName_methodName and sys.path modifications
 
 [tool.black]
 line-length = 100

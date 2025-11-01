@@ -27,16 +27,23 @@ logger = logging.getLogger(__name__)
 class Identifier:
     """Identifies media files from filesystem information."""
 
-    def __init__(self, prefer_nfo: bool = True, config: RoseyConfig | None = None):
+    def __init__(
+        self,
+        prefer_nfo: bool = True,
+        config: RoseyConfig | None = None,
+        skip_duration: bool = False,
+    ):
         """
         Initialize identifier.
 
         Args:
             prefer_nfo: Whether to prefer NFO data over filename parsing
             config: Optional config to use instead of loading from disk
+            skip_duration: If True, skip expensive duration checks (faster scanning)
         """
         self.prefer_nfo = prefer_nfo
         self.config = config if config is not None else load_config()
+        self.skip_duration = skip_duration
 
         # Performance caches
         self._duration_cache: dict[str, float | None] = {}
@@ -93,6 +100,8 @@ class Identifier:
 
     def _should_check_duration(self) -> bool:
         """Check if duration validation is enabled."""
+        if self.skip_duration:
+            return False
         return self.config.identification.minimum_movie_duration_minutes > 0
 
     def _should_check_directory_constraints(self) -> bool:
@@ -170,35 +179,43 @@ class Identifier:
         if dir_path in self._show_folder_cache:
             return self._show_folder_cache[dir_path]
 
-        # Check if parent directory is a season folder
+        result = False
+
+        # Check if parent directory is a season folder (quick check, no filesystem I/O)
         if extract_season_from_folder(directory.name):
-            self._show_folder_cache[dir_path] = True
-            return True
+            result = True
+            self._show_folder_cache[dir_path] = result
+            return result
 
-        # Check if directory contains season subdirectories
-        try:
-            for item in directory.iterdir():
-                if item.is_dir() and extract_season_from_folder(item.name):
-                    self._show_folder_cache[dir_path] = True
-                    return True
-        except (OSError, PermissionError):
-            pass
-
-        # Check if directory contains multiple media files (potential episodes)
+        # Batch check directory contents once
         media_extensions = {".mkv", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m4v"}
-        media_files = []
+        media_file_count = 0
+        has_season_subdir = False
+
         try:
             for item in directory.iterdir():
+                # Check for season subdirectories
+                if item.is_dir() and extract_season_from_folder(item.name):
+                    has_season_subdir = True
+                    break  # Found season folder, can stop
+
+                # Count media files (limit to 2 for efficiency)
                 if item.is_file() and item.suffix.lower() in media_extensions:
-                    media_files.append(item)
-                    if len(media_files) >= 2:  # Multiple media files suggest TV show
-                        self._show_folder_cache[dir_path] = True
-                        return True
+                    media_file_count += 1
+                    if media_file_count >= 2:
+                        # Multiple media files suggest TV show
+                        result = True
+                        break  # Found enough evidence, can stop
+
+            # If we found season subdirectory, it's a show folder
+            if has_season_subdir:
+                result = True
+
         except (OSError, PermissionError):
             pass
 
-        self._show_folder_cache[dir_path] = False
-        return False
+        self._show_folder_cache[dir_path] = result
+        return result
 
     def _is_only_media_file_in_directory(self, file_path: str) -> bool:
         """

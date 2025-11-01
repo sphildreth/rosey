@@ -10,7 +10,22 @@ from rosey.models import MediaItem, MoveResult
 
 logger = logging.getLogger(__name__)
 
-SIDECAR_EXTENSIONS = {".srt", ".ass", ".vtt", ".nfo", ".jpg", ".png", ".jpeg"}
+# All supported subtitle formats
+SUBTITLE_EXTENSIONS = {
+    ".srt",  # SubRip Text
+    ".ssa",  # SubStation Alpha
+    ".ass",  # Advanced SubStation Alpha
+    ".vtt",  # WebVTT
+    ".sub",  # VobSub / SubViewer / MicroDVD
+    ".idx",  # VobSub index
+    ".sbv",  # SubViewer
+    ".lrc",  # LRC (Lyric file)
+    ".smi",  # SAMI format
+    ".stl",  # Spruce subtitle file
+}
+
+# All sidecar file types (subtitles + metadata + images)
+SIDECAR_EXTENSIONS = SUBTITLE_EXTENSIONS | {".nfo", ".jpg", ".png", ".jpeg"}
 
 
 def discover_sidecars(source_path: str) -> list[str]:
