@@ -1,5 +1,6 @@
 """Media identification from filenames and NFO files."""
 
+import json
 import logging
 import subprocess
 from pathlib import Path
@@ -140,8 +141,6 @@ class Identifier:
             )
 
             if result.returncode == 0:
-                import json
-
                 data = json.loads(result.stdout)
                 duration_str = data.get("format", {}).get("duration")
                 if duration_str:
@@ -153,6 +152,7 @@ class Identifier:
         except (
             subprocess.TimeoutExpired,
             subprocess.SubprocessError,
+            FileNotFoundError,
             json.JSONDecodeError,
             ValueError,
         ) as e:
