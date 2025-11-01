@@ -117,6 +117,9 @@ class Planner:
             return self._plan_movie(item)
         elif item.kind == "episode":
             return self._plan_episode(item)
+        elif item.kind == "companion":
+            # Companions are moved automatically with their primary videos
+            return "Moved with primary video"
         else:
             # Unknown - return original path
             return item.source_path

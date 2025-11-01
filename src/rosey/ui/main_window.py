@@ -50,6 +50,7 @@ class ScanWorker(QRunnable):
         """Signals for scan worker."""
 
         progress = Signal(str)
+        progress_value = Signal(int, int)
         finished = Signal(list)
 
     def __init__(
@@ -68,12 +69,26 @@ class ScanWorker(QRunnable):
         self.movies_root = movies_root
         self.tv_root = tv_root
         self.signals = self.Signals()
+        self._cancelled = False
+
+    def is_cancelled(self) -> bool:
+        """Check if scan was cancelled."""
+        return self._cancelled
+
+    def cancel(self) -> None:
+        """Cancel the scan."""
+        self._cancelled = True
 
     def run(self) -> None:
         """Run the scan."""
         self.signals.progress.emit(f"Scanning {self.source_path}...")
+        self.signals.progress_value.emit(0, 100)
 
         try:
+            if self.is_cancelled():
+                self.signals.progress.emit("Scan cancelled")
+                return
+
             results = scan_directory(
                 self.source_path,
                 max_workers=self.max_workers,
@@ -82,17 +97,34 @@ class ScanWorker(QRunnable):
             video_results = [r for r in results if r.is_video and not r.error]
             video_paths = [r.path for r in video_results]
 
-            # Build media groups
+            if self.is_cancelled():
+                self.signals.progress.emit("Scan cancelled")
+                return
+
             self.signals.progress.emit("Grouping media files...")
+            self.signals.progress_value.emit(25, 100)
             groups = build_media_groups(
                 video_paths,
                 self.source_path,
                 enforce_one_media=False,  # Can be made configurable later
             )
 
+            if self.is_cancelled():
+                self.signals.progress.emit("Scan cancelled")
+                return
+
             items = []
-            for group in groups:
-                self.signals.progress.emit(f"Processing {group.directory}...")
+            total_groups = len(groups)
+            for idx, group in enumerate(groups, start=1):
+                if self.is_cancelled():
+                    self.signals.progress.emit("Scan cancelled")
+                    return
+
+                progress_percent = 25 + int((idx / total_groups) * 50)  # 25-75%
+                self.signals.progress.emit(
+                    f"Processing {group.directory}... ({idx}/{total_groups})"
+                )
+                self.signals.progress_value.emit(progress_percent, 100)
 
                 for video_path in group.primary_videos:
                     # Identify
@@ -117,7 +149,54 @@ class ScanWorker(QRunnable):
                         }
                     )
 
+                # Add companion files as separate items
+                for _primary_base, companion_paths in group.companions.items():
+                    for companion_path in companion_paths:
+                        # Create a companion MediaItem
+                        from rosey.models import MediaItem
+
+                        companion_item = MediaItem(
+                            kind="companion",
+                            source_path=companion_path,
+                            title=Path(companion_path).name,  # Use filename as title
+                            sidecars=[],  # Companions don't have sidecars
+                        )
+
+                        # Use a default score for companions
+                        from rosey.models import Score
+
+                        companion_score = Score(confidence=100, reasons=["Companion file"])
+
+                        # Calculate companion destination in same directory as primary video
+                        # Find the primary video's destination in this group
+                        companion_destination = companion_path  # fallback
+                        for result in items:
+                            if (
+                                result.get("group") == group
+                                and cast(MediaItem, result["item"]).kind != "companion"
+                            ):
+                                primary_dest_dir = Path(cast(str, result["destination"])).parent
+                                companion_filename = Path(companion_path).name
+                                companion_destination = str(primary_dest_dir / companion_filename)
+                                break
+
+                        items.append(
+                            {
+                                "item": companion_item,
+                                "score": companion_score,
+                                "destination": companion_destination,
+                                "group": group,  # Same group as primary video
+                            }
+                        )
+
+            if self.is_cancelled():
+                self.signals.progress.emit("Scan cancelled")
+                return
+
+            self.signals.progress.emit("Finalizing scan...")
+            self.signals.progress_value.emit(90, 100)
             self.signals.finished.emit(items)
+            self.signals.progress_value.emit(100, 100)
         except Exception as e:
             self.signals.progress.emit(f"Error: {e}")
 
@@ -386,8 +465,13 @@ class MainWindow(QMainWindow):
 
             # Checkbox
             check_item = QTableWidgetItem()
-            check_item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
-            check_item.setCheckState(Qt.CheckState.Unchecked)
+            if item.kind == "companion":
+                # Companions are not selectable for moving
+                check_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                check_item.setCheckState(Qt.CheckState.Unchecked)
+            else:
+                check_item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
+                check_item.setCheckState(Qt.CheckState.Unchecked)
             # Store the original index in user data so we can find it after sorting
             check_item.setData(Qt.ItemDataRole.UserRole, row)
             self.table.setItem(row, 0, check_item)
@@ -404,6 +488,9 @@ class MainWindow(QMainWindow):
                     name = f"{item.title} - S{item.season:02d}E{item.episodes[0]:02d}"
                 else:
                     name = item.title
+            elif item.kind == "companion":
+                # For companions, show the filename
+                name = Path(item.source_path).name
             else:
                 name = item.title or "Unknown"
 
@@ -584,6 +671,10 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Scanning...")
         self.btn_scan.setEnabled(False)
 
+        # Create and show progress dialog
+        progress = ProgressDialog("Scanning Media Files", self)
+        progress.show()
+
         worker = ScanWorker(
             source,
             max_workers=self.config.scanning.concurrency_local,
@@ -592,7 +683,25 @@ class MainWindow(QMainWindow):
             tv_root=self.config.paths.tv,
         )
         worker.signals.progress.connect(self.on_scan_progress)
+        worker.signals.progress_value.connect(progress.set_progress)
+        worker.signals.progress.connect(progress.set_status)
         worker.signals.finished.connect(self.on_scan_finished)
+
+        # Connect progress dialog cancel to worker
+        cancelled = {"flag": False}
+
+        def on_cancel() -> None:
+            cancelled["flag"] = True
+            worker.cancel()
+            progress.set_status("Cancelling scan...")
+
+        progress.cancel_requested.connect(on_cancel)
+
+        # Store references to prevent garbage collection
+        self._scan_progress = progress
+        self._scan_worker = worker
+        self._scan_cancelled = cancelled
+
         self._thread_pool.start(worker)
 
     @Slot(str)
@@ -603,12 +712,39 @@ class MainWindow(QMainWindow):
     @Slot(list)
     def on_scan_finished(self, items: list) -> None:
         """Handle scan completion and populate table."""
-        self.items = items
-        self.populate_table(items)
-        self.update_tree()
-        self.log_activity(f"Scan completed - {len(items)} items")
-        self.statusBar().showMessage("Scan completed")
-        self.btn_scan.setEnabled(True)
+        # Close progress dialog
+        if hasattr(self, "_scan_progress"):
+            was_cancelled = (
+                self._scan_cancelled["flag"] if hasattr(self, "_scan_cancelled") else False
+            )
+            self._scan_progress.set_complete(success=not was_cancelled)
+
+            if was_cancelled:
+                self.log_activity("Scan cancelled by user")
+                self.statusBar().showMessage("Scan cancelled")
+            else:
+                self.items = items
+                self.populate_table(items)
+                self.update_tree()
+                self.log_activity(f"Scan completed - {len(items)} items")
+                self.statusBar().showMessage("Scan completed")
+
+            self.btn_scan.setEnabled(True)
+
+            # Clean up references
+            del self._scan_progress
+            del self._scan_worker
+            del self._scan_cancelled
+
+            # Clean up empty directories only if scan completed successfully
+            if not was_cancelled:
+                source_path = Path(self.config.paths.source)
+                if source_path.exists():
+                    removed_dirs = self._cleanup_empty_directories_after_scan(source_path)
+                    if removed_dirs:
+                        self.log_activity(
+                            f"Removed {len(removed_dirs)} empty directories after scan"
+                        )
 
     def _get_selected_rows(self) -> list[int]:
         """Get original indices of selected rows (not visual row numbers)."""
@@ -945,6 +1081,46 @@ class MainWindow(QMainWindow):
             except (OSError, PermissionError) as e:
                 # Log but don't fail - cleanup is best-effort
                 self.log_activity(f"Could not remove directory {dir_path}: {e}")
+
+        return removed_dirs
+
+    def _cleanup_empty_directories_after_scan(self, root_path: Path) -> list[Path]:
+        """Remove all empty directories recursively under the root path after scanning.
+
+        Args:
+            root_path: Root directory to clean up empty subdirectories from
+
+        Returns:
+            List of removed directory paths
+        """
+        removed_dirs: list[Path] = []
+
+        if not root_path.exists() or not root_path.is_dir():
+            return removed_dirs
+
+        # Walk the directory tree in reverse order (deepest first)
+        # to remove nested empty directories
+        try:
+            all_dirs = []
+            for dir_path in root_path.rglob("*"):
+                if dir_path.is_dir():
+                    all_dirs.append(dir_path)
+
+            # Sort by depth (deepest first)
+            all_dirs.sort(key=lambda p: len(p.parts), reverse=True)
+
+            for dir_path in all_dirs:
+                try:
+                    # Check if directory is empty
+                    if not any(dir_path.iterdir()):
+                        dir_path.rmdir()
+                        removed_dirs.append(dir_path)
+                        self.log_activity(f"Removed empty directory after scan: {dir_path}")
+                except (OSError, PermissionError) as e:
+                    # Log but don't fail - cleanup is best-effort
+                    self.log_activity(f"Could not remove directory {dir_path}: {e}")
+        except (OSError, PermissionError) as e:
+            self.log_activity(f"Could not access root path {root_path}: {e}")
 
         return removed_dirs
 

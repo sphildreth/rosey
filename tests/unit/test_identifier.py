@@ -581,3 +581,105 @@ class TestMoviesAlwaysInOwnDirectoryEdgeCases:
 
         assert result.item.kind == "unknown"
         assert any("show folder" in reason.lower() for reason in result.reasons)
+
+
+class TestCompanionFiles:
+    """Test companion file discovery for movies."""
+
+    def test_subtitle_in_same_directory(self, tmp_path):
+        """Test discovery of subtitle files in the same directory."""
+        movie_dir = tmp_path / "Movie"
+        movie_dir.mkdir()
+        movie_file = movie_dir / "movie.mkv"
+        movie_file.write_text("fake movie")
+        subtitle_file = movie_dir / "movie.srt"
+        subtitle_file.write_text("fake subtitles")
+
+        result = identify_file(str(movie_file))
+
+        assert result.item.kind == "movie"
+        assert len(result.item.sidecars) == 1
+        assert str(subtitle_file) in result.item.sidecars
+
+    def test_subtitle_in_subs_directory(self, tmp_path):
+        """Test discovery of subtitle files in Subs subdirectory."""
+        movie_dir = tmp_path / "Movie"
+        movie_dir.mkdir()
+        subs_dir = movie_dir / "Subs"
+        subs_dir.mkdir()
+        movie_file = movie_dir / "movie.mkv"
+        movie_file.write_text("fake movie")
+        subtitle_file = subs_dir / "English.srt"  # Language-based naming in Subs folder
+        subtitle_file.write_text("fake subtitles")
+
+        result = identify_file(str(movie_file))
+
+        assert result.item.kind == "movie"
+        assert len(result.item.sidecars) == 1
+        assert str(subtitle_file) in result.item.sidecars
+
+    def test_multiple_subtitle_files(self, tmp_path):
+        """Test discovery of multiple subtitle files."""
+        movie_dir = tmp_path / "Movie"
+        movie_dir.mkdir()
+        subs_dir = movie_dir / "Subs"
+        subs_dir.mkdir()
+        movie_file = movie_dir / "movie.mkv"
+        movie_file.write_text("fake movie")
+
+        # Subtitles in same directory
+        sub1 = movie_dir / "movie.srt"
+        sub1.write_text("fake srt")
+        sub2 = movie_dir / "movie.ass"
+        sub2.write_text("fake ass")
+
+        # Subtitles in Subs directory
+        sub3 = subs_dir / "English.srt"
+        sub3.write_text("fake english")
+        sub4 = subs_dir / "Spanish.srt"
+        sub4.write_text("fake spanish")
+
+        result = identify_file(str(movie_file))
+
+        assert result.item.kind == "movie"
+        assert len(result.item.sidecars) == 4
+        expected_sidecars = {str(sub1), str(sub2), str(sub3), str(sub4)}
+        assert set(result.item.sidecars) == expected_sidecars
+
+    def test_image_files_discovered(self, tmp_path):
+        """Test discovery of image files (posters, etc.)."""
+        movie_dir = tmp_path / "Movie"
+        movie_dir.mkdir()
+        movie_file = movie_dir / "movie.mkv"
+        movie_file.write_text("fake movie")
+        poster_file = movie_dir / "movie.jpg"  # Same stem as movie file
+        poster_file.write_text("fake image")
+        fanart_file = movie_dir / "movie.png"  # Same stem as movie file
+        fanart_file.write_text("fake image")
+
+        result = identify_file(str(movie_file))
+
+        assert result.item.kind == "movie"
+        assert len(result.item.sidecars) == 2
+        expected_sidecars = {str(poster_file), str(fanart_file)}
+        assert set(result.item.sidecars) == expected_sidecars
+
+    def test_no_companion_files(self, tmp_path):
+        """Test movie with no companion files."""
+        movie_dir = tmp_path / "Movie"
+        movie_dir.mkdir()
+        movie_file = movie_dir / "movie.mkv"
+        movie_file.write_text("fake movie")
+
+        result = identify_file(str(movie_file))
+
+        assert result.item.kind == "movie"
+        assert len(result.item.sidecars) == 0
+
+    def test_nonexistent_directory_handled(self):
+        """Test handling of nonexistent directory gracefully."""
+        # This shouldn't happen in normal usage, but test robustness
+        result = identify_file("/nonexistent/path/movie.mkv")
+
+        # Should still create MediaItem, but sidecars will be empty
+        assert result.item.sidecars == []

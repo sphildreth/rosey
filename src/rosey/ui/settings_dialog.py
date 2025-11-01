@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from rosey import __version__
 from rosey.config import RoseyConfig
 
 
@@ -56,6 +57,10 @@ class SettingsDialog(QDialog):
         # Scanning tab
         scanning_tab = self._create_scanning_tab()
         tabs.addTab(scanning_tab, "Scanning")
+
+        # About tab
+        about_tab = self._create_about_tab()
+        tabs.addTab(about_tab, "About")
 
         layout.addWidget(tabs)
 
@@ -206,6 +211,75 @@ class SettingsDialog(QDialog):
         self.follow_symlinks = QCheckBox("Follow Symbolic Links")
         self.follow_symlinks.setChecked(self.config.scanning.follow_symlinks)
         layout.addRow("", self.follow_symlinks)
+
+        return widget
+
+    def _create_about_tab(self) -> QWidget:
+        """Create about tab."""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+
+        # Application info
+        app_group = QGroupBox("Application")
+        app_layout = QFormLayout(app_group)
+
+        app_layout.addRow("Name:", QLabel("Rosey"))
+        app_layout.addRow("Version:", QLabel(__version__))
+        app_layout.addRow("Status:", QLabel("Beta"))
+
+        layout.addWidget(app_group)
+
+        # Description
+        desc_group = QGroupBox("Description")
+        desc_layout = QVBoxLayout(desc_group)
+
+        description = QLabel(
+            "Rosey is a cross-platform desktop utility (Windows + Linux) that scans a Source folder "
+            "(including network shares), identifies Movies and TV Shows using offline signals and "
+            "optional online metadata lookups (TMDB/TVDB), then moves selected items into clean, "
+            "Jellyfin-ready folders.\n\n"
+            "Privacy-first: no telemetry; provider calls only when enabled."
+        )
+        description.setWordWrap(True)
+        desc_layout.addWidget(description)
+
+        layout.addWidget(desc_group)
+
+        # Copyright and license
+        legal_group = QGroupBox("Legal")
+        legal_layout = QFormLayout(legal_group)
+
+        legal_layout.addRow("Copyright:", QLabel("© 2025 Steven Hildreth"))
+        legal_layout.addRow("License:", QLabel("MIT License"))
+
+        license_text = QLabel(
+            "Permission is hereby granted, free of charge, to any person obtaining a copy "
+            'of this software and associated documentation files (the "Software"), to deal '
+            "in the Software without restriction, including without limitation the rights "
+            "to use, copy, modify, merge, publish, distribute, sublicense, and/or sell "
+            "copies of the Software, and to permit persons to whom the Software is "
+            "furnished to do so, subject to the following conditions:\n\n"
+            "The above copyright notice and this permission notice shall be included in all "
+            "copies or substantial portions of the Software.\n\n"
+            'THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR '
+            "IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, "
+            "FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT."
+        )
+        license_text.setWordWrap(True)
+        legal_layout.addRow("License Text:", license_text)
+
+        layout.addWidget(legal_group)
+
+        # Links
+        links_group = QGroupBox("Links")
+        links_layout = QFormLayout(links_group)
+
+        links_layout.addRow("Repository:", QLabel("https://github.com/sphildreth/rosey"))
+        links_layout.addRow("Documentation:", QLabel("See docs/ folder in repository"))
+
+        layout.addWidget(links_group)
+
+        layout.addStretch()
 
         return widget
 

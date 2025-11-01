@@ -43,6 +43,54 @@ class Identifier:
         self._show_folder_cache: dict[str, bool] = {}
         self._only_media_file_cache: dict[str, bool] = {}
 
+    def _discover_companion_files(self, file_path: str) -> list[str]:
+        """
+        Discover companion files for a media file.
+
+        For movies, looks for:
+        - Subtitle files (.srt, .ass, .vtt) in same directory or "Subs" subdirectory
+        - Image files (.jpg, .png, .jpeg) in same directory
+
+        Args:
+            file_path: Path to the media file
+
+        Returns:
+            List of companion file paths
+        """
+        path = Path(file_path)
+        parent_dir = path.parent
+        companions: list[str] = []
+
+        if not parent_dir.exists():
+            return companions
+
+        # Extensions to look for
+        subtitle_exts = {".srt", ".ass", ".vtt"}
+        image_exts = {".jpg", ".png", ".jpeg"}
+
+        try:
+            # Look in parent directory
+            for item in parent_dir.iterdir():
+                if not item.is_file():
+                    continue
+
+                ext = item.suffix.lower()
+                if ext in subtitle_exts or ext in image_exts:
+                    companions.append(str(item))
+
+            # Look in "Subs" subdirectory
+            subs_dir = parent_dir / "Subs"
+            if subs_dir.exists() and subs_dir.is_dir():
+                for item in subs_dir.iterdir():
+                    if item.is_file() and item.suffix.lower() in subtitle_exts:
+                        companions.append(str(item))
+
+        except (OSError, PermissionError):
+            # If we can't read the directory, just return empty list
+            pass
+
+        return companions
+
     def _should_check_duration(self) -> bool:
         """Check if duration validation is enabled."""
         return self.config.identification.minimum_movie_duration_minutes > 0
@@ -665,6 +713,11 @@ class Identifier:
         if part:
             reasons.append(f"Multipart movie: Part {part}")
 
+        # Discover companion files
+        sidecars = self._discover_companion_files(file_path)
+        if sidecars:
+            reasons.append(f"Found {len(sidecars)} companion files")
+
         # Build NFO dict
         nfo_dict: dict[str, str | None] = {}
         if nfo_data:
@@ -681,6 +734,7 @@ class Identifier:
             title=title,
             year=year,
             part=part,
+            sidecars=sidecars,
             nfo=nfo_dict,
         )
 

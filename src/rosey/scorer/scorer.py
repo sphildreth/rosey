@@ -77,7 +77,7 @@ class Scorer:
             reasons.append("No title identified")
 
         # Year/date confidence
-        if item.kind == "movie":
+        if item.kind in ("movie", "companion"):
             if item.year:
                 confidence += 15
                 reasons.append(f"Year identified: {item.year}")

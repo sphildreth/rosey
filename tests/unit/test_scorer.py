@@ -35,19 +35,23 @@ class TestScorerBasic:
         # Should have high confidence: IMDB ID (50) + title from NFO (20) + year (15)
         assert score.confidence >= 70
 
-    def test_episode_with_season_episode(self):
-        """Test episode with season/episode info."""
+    def test_companion_with_year_gets_year_bonus(self):
+        """Test that companion files get year confidence bonus like movies."""
         item = MediaItem(
-            kind="episode",
-            source_path="/path/Show.S01E05.mkv",
-            title="Show",
-            season=1,
-            episodes=[5],
+            kind="companion",
+            source_path="/path/Matrix.srt",
+            title="The Matrix",
+            year=1999,
+            nfo={"tmdbid": "123", "title": "The Matrix", "year": "1999"},
         )
-        result = IdentificationResult(item=item, reasons=["Parsed S01E05"])
+        result = IdentificationResult(item=item, reasons=["Companion of identified movie"])
 
         scorer = Scorer()
         score = scorer.score(result)
+
+        # Should have year bonus like movies: TMDB ID (45) + title from NFO (20) + year (15) = 80
+        assert score.confidence == 80
+        assert "Year identified: 1999" in score.reasons
 
         # Should have decent confidence: title (10) + season/episode (20)
         assert score.confidence >= 30
