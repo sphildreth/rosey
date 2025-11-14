@@ -1026,6 +1026,7 @@ class MainWindow(QMainWindow):
                 message = Signal(str)
                 progress_value = Signal(int, int)
                 status = Signal(str)
+                file_processed = Signal(str, float, float)  # filename, size_mb, time_sec
                 finished = Signal(dict)
 
             def __init__(self, items: list[dict], selected_rows: list[int]) -> None:
@@ -1060,9 +1061,12 @@ class MainWindow(QMainWindow):
                     # Get file size for speed calculation
                     try:
                         file_size = Path(source).stat().st_size
+                        size_mb = file_size / (1024 * 1024)
                     except Exception:
                         file_size = 0
+                        size_mb = 0.0
 
+                    file_start_time = time.time()
                     try:
                         move_result = move_with_sidecars(
                             item,
@@ -1070,12 +1074,18 @@ class MainWindow(QMainWindow):
                             conflict_policy=policy,
                             dry_run=dry_run,
                         )
+                        file_time = time.time() - file_start_time
+
                         if move_result.success:
                             moved += 1
                             # Track the row index of successfully moved item
                             moved_indices.append(self.selected_rows[idx - 1])
                             if not dry_run:
                                 total_bytes += file_size
+
+                            # Emit file processing stats
+                            filename = Path(source).name
+                            self.signals.file_processed.emit(filename, size_mb, file_time)
                         else:
                             errors.extend(move_result.errors)
                     except Exception as e:  # pragma: no cover - UI thread
@@ -1115,6 +1125,7 @@ class MainWindow(QMainWindow):
         worker.signals.message.connect(progress.append_detail)
         worker.signals.progress_value.connect(progress.set_progress)
         worker.signals.status.connect(progress.set_status)
+        worker.signals.file_processed.connect(progress.add_file_stats)
 
         def on_finished(summary: dict) -> None:
             moved = summary.get("moved", 0)

@@ -135,6 +135,9 @@ class ProgressDialog(QDialog):
         # Ensure progress bar shows 100%
         self.progress_bar.setValue(self.progress_bar.maximum())
 
+        # Reset cancellation state so button behaves correctly
+        self._cancelled = False
+
         # Add final summary to details
         if success and self._total_files > 0:
             avg_time = self._total_time_sec / self._total_files
@@ -164,6 +167,9 @@ class ProgressDialog(QDialog):
             with contextlib.suppress(RuntimeError):
                 self.cancel_button.clicked.disconnect()
 
+            # Always enable the button and reset its state first
+            self.cancel_button.setEnabled(True)
+
             if allow_clear:
                 # Add "Close and Clear" button for successful operations
                 self.cancel_button.setText("Close and Clear")
@@ -183,8 +189,6 @@ class ProgressDialog(QDialog):
                 self.cancel_button.setText("Close")
                 self.cancel_button.setStyleSheet("")  # Reset to default style
                 self.cancel_button.clicked.connect(self.accept)
-
-            self.cancel_button.setEnabled(True)
         else:
             self.status_label.setText("✗ Failed - see details")
             self.status_label.setStyleSheet(
