@@ -378,6 +378,46 @@ def extract_season_from_folder(folder_name: str) -> int | None:
     return None
 
 
+# TMDB ID pattern for directory names [tmdbid-123]
+TMDB_ID_PATTERN = re.compile(r"\[tmdbid-(\d+)\]", re.IGNORECASE)
+
+
+def extract_tmdb_id_from_path(path: str) -> str | None:
+    """
+    Extract TMDB ID from directory path using [tmdbid-XXXX] pattern.
+
+    Searches through all path components (current file/directory and all parents)
+    for a TMDB ID pattern and returns the first one found (closest to the file).
+
+    Args:
+        path: Full file or directory path
+
+    Returns:
+        TMDB ID if found in any parent directory, None otherwise
+
+    Examples:
+        >>> extract_tmdb_id_from_path("/movies/The Matrix (1999) [tmdbid-603]/movie.mkv")
+        "603"
+        >>> extract_tmdb_id_from_path("/tv/Breaking Bad (2008) [tmdbid-1396]/Season 01/S01E01.mkv")
+        "1396"
+        >>> extract_tmdb_id_from_path("/movies/Random Movie/movie.mkv")
+        None
+    """
+    from pathlib import Path
+
+    # Convert to Path object for easier manipulation
+    p = Path(path)
+
+    # Check the file/directory name itself and all parent directories
+    # Start from the closest (the path itself) and work up to root
+    for part in [p] + list(p.parents):
+        match = TMDB_ID_PATTERN.search(part.name)
+        if match:
+            return match.group(1)
+
+    return None
+
+
 def clean_title(title: str, extracted_year: int | None = None) -> str:
     """
     Clean up a title string by removing patterns and normalizing.

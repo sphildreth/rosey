@@ -166,6 +166,7 @@ class ScanWorker(QRunnable):
         follow_symlinks: bool = False,
         movies_root: str = "",
         tv_root: str = "",
+        provider_manager: ProviderManager | None = None,
     ) -> None:
         super().__init__()
         self.source_path = source_path
@@ -173,6 +174,7 @@ class ScanWorker(QRunnable):
         self.follow_symlinks = follow_symlinks
         self.movies_root = movies_root
         self.tv_root = tv_root
+        self.provider_manager = provider_manager
         self.signals = self.Signals()
         self._cancelled = False
 
@@ -227,8 +229,15 @@ class ScanWorker(QRunnable):
 
             # Create a shared identifier instance with config
             # Skip duration checks during scan for performance - user can verify manually later
+            # Pass TMDB provider if available for directory-based TMDB ID recognition
             config = load_config()
-            identifier = Identifier(prefer_nfo=True, config=config, skip_duration=True)
+            tmdb_provider = self.provider_manager._tmdb if self.provider_manager else None
+            identifier = Identifier(
+                prefer_nfo=True,
+                config=config,
+                skip_duration=True,
+                tmdb_provider=tmdb_provider,
+            )
 
             def process_video(video_path: str, group: MediaGroup) -> dict:
                 """Process a single video file."""
@@ -859,6 +868,7 @@ class MainWindow(QMainWindow):
             follow_symlinks=self.config.scanning.follow_symlinks,
             movies_root=self.config.paths.movies,
             tv_root=self.config.paths.tv,
+            provider_manager=self.provider_manager,
         )
         worker.signals.progress.connect(self.on_scan_progress)
         worker.signals.progress_value.connect(progress.set_progress)

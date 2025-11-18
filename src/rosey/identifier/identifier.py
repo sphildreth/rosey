@@ -15,12 +15,14 @@ from rosey.identifier.patterns import (
     extract_part,
     extract_season_from_folder,
     extract_title_before_episode,
+    extract_tmdb_id_from_path,
     extract_year,
 )
 from rosey.models import IdentificationResult, MediaItem
 
 if TYPE_CHECKING:
     from rosey.identifier.patterns import DateMatch, EpisodeMatch
+    from rosey.providers.tmdb import TMDBProvider
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +35,7 @@ class Identifier:
         prefer_nfo: bool = True,
         config: RoseyConfig | None = None,
         skip_duration: bool = False,
+        tmdb_provider: "TMDBProvider | None" = None,
     ):
         """
         Initialize identifier.
@@ -41,23 +44,30 @@ class Identifier:
             prefer_nfo: Whether to prefer NFO data over filename parsing
             config: Optional config to use instead of loading from disk
             skip_duration: If True, skip expensive duration checks (faster scanning)
+            tmdb_provider: Optional TMDB provider for querying TMDB API when IDs found in paths
         """
         self.prefer_nfo = prefer_nfo
         self.config = config if config is not None else load_config()
         self.skip_duration = skip_duration
+        self.tmdb_provider = tmdb_provider
 
         # Performance caches
         self._duration_cache: dict[str, float | None] = {}
         self._show_folder_cache: dict[str, bool] = {}
         self._only_media_file_cache: dict[str, bool] = {}
+        self._tmdb_cache: dict[str, dict[str, str] | None] = {}  # Cache TMDB API results
 
     def _discover_companion_files(self, file_path: str) -> list[str]:
         """
         Discover companion files for a media file.
 
         For movies, looks for:
-        - Subtitle files (.srt, .ass, .vtt) in same directory or "Subs" subdirectory
+        - Subtitle files (.srt, .ass, .vtt) in same directory or subtitle subdirectories
         - Image files (.jpg, .png, .jpeg) in same directory
+
+        Subtitle subdirectories are searched case-insensitively and include:
+        - "Subs", "Sub", "Subtitles", "Subtitle"
+        - Recursively scans within these folders to find all subtitle files
 
         Args:
             file_path: Path to the media file
@@ -76,22 +86,23 @@ class Identifier:
         subtitle_exts = {".srt", ".ass", ".vtt"}
         image_exts = {".jpg", ".png", ".jpeg"}
 
+        # Common subtitle folder names (will be matched case-insensitively)
+        subtitle_folder_names = {"subs", "sub", "subtitles", "subtitle"}
+
         try:
             # Look in parent directory
             for item in parent_dir.iterdir():
-                if not item.is_file():
-                    continue
-
-                ext = item.suffix.lower()
-                if ext in subtitle_exts or ext in image_exts:
-                    companions.append(str(item))
-
-            # Look in "Subs" subdirectory
-            subs_dir = parent_dir / "Subs"
-            if subs_dir.exists() and subs_dir.is_dir():
-                for item in subs_dir.iterdir():
-                    if item.is_file() and item.suffix.lower() in subtitle_exts:
+                if item.is_file():
+                    ext = item.suffix.lower()
+                    if ext in subtitle_exts or ext in image_exts:
                         companions.append(str(item))
+                elif item.is_dir():
+                    # Check if this is a subtitle folder (case-insensitive)
+                    if item.name.lower() in subtitle_folder_names:
+                        # Recursively find all subtitle files in this folder
+                        for sub_item in item.rglob("*"):
+                            if sub_item.is_file() and sub_item.suffix.lower() in subtitle_exts:
+                                companions.append(str(sub_item))
 
         except (OSError, PermissionError):
             # If we can't read the directory, just return empty list
@@ -270,6 +281,76 @@ class Identifier:
             else:
                 errors.append(f"Failed to parse NFO: {Path(nfo_path).name}")
 
+        # Extract TMDB ID from path and query API if available
+        # This provides definitive information about whether it's a movie or TV show
+        tmdb_media_type = None  # Will be "movie" or "tv" if TMDB query succeeds
+        path_tmdb_id = extract_tmdb_id_from_path(file_path)
+
+        if path_tmdb_id and self.tmdb_provider:
+            # Check cache first
+            cache_key = f"id_{path_tmdb_id}"
+            if cache_key in self._tmdb_cache:
+                cached_result = self._tmdb_cache[cache_key]
+                if cached_result:
+                    tmdb_media_type = cached_result.get("media_type")
+                    reasons.append(f"TMDB ID {path_tmdb_id} from path (cached: {tmdb_media_type})")
+            else:
+                # Query TMDB API
+                # Try movie first
+                movie_result = self.tmdb_provider.get_movie_by_id(path_tmdb_id)
+                if movie_result and movie_result.get("id"):
+                    tmdb_media_type = "movie"
+                    self._tmdb_cache[cache_key] = {
+                        "media_type": "movie",
+                        "title": movie_result.get("title"),
+                    }
+                    reasons.append(
+                        f"TMDB ID {path_tmdb_id} from path - definitive movie identification"
+                    )
+                    logger.info(
+                        f"TMDB API confirmed movie: {movie_result.get('title')} ({path_tmdb_id})"
+                    )
+                else:
+                    # Try TV show
+                    tv_result = self.tmdb_provider.get_tv_by_id(path_tmdb_id)
+                    if tv_result and tv_result.get("id"):
+                        tmdb_media_type = "tv"
+                        self._tmdb_cache[cache_key] = {
+                            "media_type": "tv",
+                            "name": tv_result.get("name"),
+                        }
+                        reasons.append(
+                            f"TMDB ID {path_tmdb_id} from path - definitive TV show identification"
+                        )
+                        logger.info(
+                            f"TMDB API confirmed TV show: {tv_result.get('name')} ({path_tmdb_id})"
+                        )
+                    else:
+                        # Neither worked - cache the failure
+                        self._tmdb_cache[cache_key] = None
+                        reasons.append(f"TMDB ID {path_tmdb_id} from path - API lookup failed")
+                        logger.warning(f"TMDB ID {path_tmdb_id} not found in API")
+
+            # Add TMDB ID to NFO dict if we found one and don't already have it
+            if path_tmdb_id and tmdb_media_type:
+                if not nfo_data:
+                    # Create a minimal nfo_data object to hold the TMDB ID
+                    from rosey.identifier.nfo import NFOData
+
+                    nfo_data = NFOData(tmdb_id=path_tmdb_id)
+                elif not nfo_data.tmdb_id:
+                    # Update existing nfo_data with the TMDB ID from path
+                    nfo_data = NFOData(
+                        title=nfo_data.title,
+                        year=nfo_data.year,
+                        season=nfo_data.season,
+                        episode=nfo_data.episode,
+                        tmdb_id=path_tmdb_id,
+                        imdb_id=nfo_data.imdb_id,
+                        tvdb_id=nfo_data.tvdb_id,
+                        episode_title=nfo_data.episode_title,
+                    )
+
         # Parse filename and folder structure
         filename = path.stem  # Without extension
         folder_name = path.parent.name
@@ -293,7 +374,31 @@ class Identifier:
         date_info = extract_date(filename)
 
         # Determine media type and build MediaItem
-        if episode_info or date_info or (nfo_data and nfo_data.season is not None):
+        # Priority 1: TMDB API definitive identification (when TMDB ID found in path)
+        if tmdb_media_type == "tv":
+            # TMDB API confirmed this is a TV show - force episode identification
+            # Even if filename doesn't have episode info, it should still be treated as episode
+            if not (episode_info or date_info or (nfo_data and nfo_data.season is not None)):
+                # No episode info found - log a warning but still treat as episode
+                reasons.append(
+                    "TMDB API indicates TV show but no episode info found - treating as episode"
+                )
+            item = self._identify_episode(
+                file_path,
+                filename,
+                folder_name,
+                parent_folder,
+                episode_info,
+                date_info,
+                nfo_data,
+                reasons,
+            )
+        elif tmdb_media_type == "movie":
+            # TMDB API confirmed this is a movie - force movie identification
+            item = self._identify_movie(file_path, filename, nfo_data, reasons)
+            reasons.append("TMDB API definitive movie classification")
+        # Priority 2: Standard heuristic-based identification
+        elif episode_info or date_info or (nfo_data and nfo_data.season is not None):
             # This is a TV episode
             item = self._identify_episode(
                 file_path,
