@@ -1,9 +1,12 @@
 """File system scanner with concurrency and error handling."""
 
 import logging
+import shutil
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+
+from rosey.identifier.patterns import clean_title, extract_year
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +77,61 @@ class Scanner:
         if not video_paths:
             logger.warning(f"No video files found in {root_path}")
             return results
+
+        # Create directories for files directly in root_path that can be parsed as movies
+        root_path_obj = Path(root_path)
+        updated_video_paths = []
+        for video_path in video_paths:
+            path_obj = Path(video_path)
+
+            # Check if file is directly in root_path (not in a subdirectory)
+            if path_obj.parent == root_path_obj:
+                # Try to extract title and year from filename
+                filename = path_obj.stem
+                year = extract_year(filename)
+                if year:
+                    title = clean_title(filename, extracted_year=year)
+                    if title:
+                        # Create directory name: "Title (Year)"
+                        dir_name = f"{title} ({year})"
+                        dir_path = root_path_obj / dir_name
+
+                        # Create directory if it doesn't exist
+                        dir_path.mkdir(exist_ok=True)
+
+                        # Move video file to new directory
+                        new_video_path = dir_path / path_obj.name
+                        shutil.move(str(path_obj), str(new_video_path))
+
+                        # Move companion files (subtitles and images)
+                        companion_exts = {".srt", ".ass", ".vtt", ".jpg", ".png", ".jpeg"}
+                        video_stem_lower = path_obj.stem.lower()
+                        for item in root_path_obj.iterdir():
+                            if item.is_file() and item.suffix.lower() in companion_exts:
+                                companion_stem_lower = item.stem.lower()
+                                # Move if companion has same base name as video file
+                                if companion_stem_lower == video_stem_lower:
+                                    new_companion_path = dir_path / item.name
+                                    shutil.move(str(item), str(new_companion_path))
+                                    logger.info(
+                                        f"Moved companion file '{item.name}' to directory '{dir_name}'"
+                                    )
+
+                        logger.info(
+                            f"Moved '{path_obj.name}' and companions to directory '{dir_name}'"
+                        )
+
+                        # Update path for further processing
+                        updated_video_paths.append(str(new_video_path))
+                    else:
+                        updated_video_paths.append(video_path)
+                else:
+                    updated_video_paths.append(video_path)
+            else:
+                updated_video_paths.append(video_path)
+
+        # Use updated paths
+        video_paths = updated_video_paths
 
         # Process paths concurrently
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:

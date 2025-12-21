@@ -1,6 +1,7 @@
 """Minimal UI for Rosey."""
 
 import contextlib
+import shutil
 from pathlib import Path
 from typing import Literal, cast
 
@@ -13,6 +14,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QMainWindow,
     QMenu,
+    QMessageBox,
     QPushButton,
     QSplitter,
     QStyle,
@@ -1500,11 +1502,14 @@ class MainWindow(QMainWindow):
 
         menu = QMenu(self)
         identify_action = menu.addAction("Identify...")
+        delete_action = menu.addAction("Delete...")
 
         action = menu.exec(self.tree.viewport().mapToGlobal(position))
 
         if action == identify_action:
             self.on_identify(item)
+        elif action == delete_action:
+            self.on_delete(item)
 
     def on_identify(self, tree_item: QTreeWidgetItem) -> None:
         """Handle identify action using manual dialog."""
@@ -1639,6 +1644,90 @@ class MainWindow(QMainWindow):
                 self.update_tree(preserve_selection=True)
 
                 self.log_activity(f"Identification: Completed for '{identified_title}'")
+
+    def on_delete(self, tree_item: QTreeWidgetItem) -> None:
+        """Handle delete action for a media group."""
+        # Find the media directory this tree item represents
+        selected_media_dir = None
+
+        for media_dir, group_data in self.groups.items():
+            if group_data.get("node") == tree_item:
+                selected_media_dir = media_dir
+                break
+
+        if not selected_media_dir:
+            # Top-level item - cannot delete
+            return
+
+        media_path = Path(selected_media_dir)
+        if not media_path.exists():
+            QMessageBox.warning(
+                self, "Directory Not Found", f"Directory does not exist:\n{media_path}"
+            )
+            return
+
+        # Confirmation dialog
+        reply = QMessageBox.question(
+            self,
+            "Confirm Deletion",
+            f"Are you sure you want to delete this media directory and all its contents?\n\n{media_path}\n\n"
+            f"This action cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            # Delete the directory and all contents
+            shutil.rmtree(media_path)
+
+            # Remove from groups
+            if selected_media_dir in self.groups:
+                del self.groups[selected_media_dir]
+
+            # Remove from tree
+            parent = tree_item.parent()
+            if parent:
+                parent.removeChild(tree_item)
+
+            # Remove items from self.items that are in this directory
+            items_to_remove = []
+            for i, item_dict in enumerate(self.items):
+                item_path = Path(item_dict["item"].source_path)
+                try:
+                    item_path.relative_to(media_path)
+                    items_to_remove.append(i)
+                except ValueError:
+                    # Not in the deleted directory
+                    continue
+
+            # Remove in reverse order to maintain indices
+            for i in reversed(items_to_remove):
+                self.items.pop(i)
+
+            self.log_activity(
+                f"Deleted directory: {media_path} ({len(items_to_remove)} items removed)"
+            )
+
+            # Refresh the table
+            self.populate_table(self.items)
+
+            # Show success message
+            QMessageBox.information(
+                self,
+                "Directory Deleted",
+                f"Directory deleted successfully:\n{media_path}\n\n"
+                f"Removed {len(items_to_remove)} items from the list.",
+            )
+
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Deletion Failed",
+                f"Failed to delete directory:\n{media_path}\n\nError: {str(e)}",
+            )
 
     def _extract_episode_title(self, filepath: str) -> str | None:
         """Extract episode title from filename if present."""
