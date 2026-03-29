@@ -91,6 +91,11 @@ class ProgressDialog(QDialog):
         self.progress_bar.setMaximum(maximum)
         self.progress_bar.setValue(value)
 
+        # When at 100%, change button to indicate completion is imminent
+        # (finalization happens in set_complete, but this helps avoid confusion)
+        if value >= maximum and maximum > 0:
+            self.cancel_button.setText("Done")
+
     def append_detail(self, message: str) -> None:
         """Append message to details log."""
         self.details_text.append(message)

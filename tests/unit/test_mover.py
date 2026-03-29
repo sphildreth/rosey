@@ -1,6 +1,5 @@
 """Tests for mover module."""
 
-import shutil
 from pathlib import Path
 
 import pytest
@@ -406,15 +405,12 @@ def test_cross_volume_size_mismatch_rollback(temp_source, temp_dest, monkeypatch
 
     monkeypatch.setattr(mover, "same_volume", lambda s, d: False)
 
-    original_copy = shutil.copy2
-
-    def corrupt_copy(src, dst, **kwargs):
-        result = original_copy(src, dst, **kwargs)
-        # Truncate the copied file
+    # Mock _fast_copy_file_range to succeed but leave wrong-sized file
+    def corrupt_fast_copy(src, dst):
         Path(dst).write_bytes(b"x" * 500)
-        return result
+        return True
 
-    monkeypatch.setattr(shutil, "copy2", corrupt_copy)
+    monkeypatch.setattr(mover, "_fast_copy_file_range", corrupt_fast_copy)
 
     success, action = move_file_transactional(str(source), str(dest), dry_run=False)
 

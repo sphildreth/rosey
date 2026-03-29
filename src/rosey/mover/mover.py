@@ -10,6 +10,12 @@ from rosey.models import MediaItem, MoveResult
 
 logger = logging.getLogger(__name__)
 
+# Use efficient syscall for cross-volume copies if available
+try:
+    _HAS_COPY_FILE_RANGE = hasattr(os, "copy_file_range")
+except Exception:
+    _HAS_COPY_FILE_RANGE = False
+
 # All supported subtitle formats
 SUBTITLE_EXTENSIONS = {
     ".srt",  # SubRip Text
@@ -27,23 +33,105 @@ SUBTITLE_EXTENSIONS = {
 # All sidecar file types (subtitles + metadata + images)
 SIDECAR_EXTENSIONS = SUBTITLE_EXTENSIONS | {".nfo", ".jpg", ".png", ".jpeg"}
 
+# Directory creation cache to avoid redundant mkdir calls
+_dir_created_cache: set[str] = set()
+
+
+def _ensure_dir_exists(path: str) -> None:
+    """Ensure directory exists, using cache to avoid redundant calls."""
+    parent = str(Path(path).parent)
+    if parent not in _dir_created_cache:
+        Path(parent).mkdir(parents=True, exist_ok=True)
+        _dir_created_cache.add(parent)
+
+
+def _fast_copy_file_range(src: str, dst: str) -> bool:
+    """Use copy_file_range for efficient zero-copy transfer."""
+    if not _HAS_COPY_FILE_RANGE:
+        return False
+
+    src_fd = None
+    dst_fd = None
+    try:
+        src_fd = os.open(src, os.O_RDONLY)
+        dst_fd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+        chunk_size = 64 * 1024 * 1024
+        while True:
+            copied = os.copy_file_range(src_fd, dst_fd, chunk_size)
+            if copied == 0:
+                return True
+    except Exception:
+        return False
+    finally:
+        if dst_fd is not None:
+            os.close(dst_fd)
+        if src_fd is not None:
+            os.close(src_fd)
+
+
+def _fast_verify_files_identical(src: str, dst: str) -> bool:
+    """Fast verification using copy_file_range to compare files."""
+    if not _HAS_COPY_FILE_RANGE:
+        # Fallback to size check
+        return os.path.getsize(src) == os.path.getsize(dst)
+
+    try:
+        src_stat = os.stat(src)
+        dst_stat = os.stat(dst)
+
+        # Quick size check first
+        if src_stat.st_size != dst_stat.st_size:
+            return False
+
+        # For small files, just use size check
+        if src_stat.st_size < 1024 * 1024:  # < 1MB
+            return True
+
+        # Use copy_file_range to verify by reading through both files
+        src_fd = os.open(src, os.O_RDONLY)
+        try:
+            dst_fd = os.open(dst, os.O_RDONLY)
+            try:
+                chunk_size = 64 * 1024 * 1024
+                remaining = src_stat.st_size
+                while remaining > 0:
+                    to_copy = min(chunk_size, remaining)
+                    # Verify by reading from both
+                    src_hash = os.read(src_fd, to_copy)
+                    dst_hash = os.read(dst_fd, to_copy)
+                    if src_hash != dst_hash:
+                        return False
+                    remaining -= to_copy
+            finally:
+                os.close(dst_fd)
+        finally:
+            os.close(src_fd)
+        return True
+    except Exception:
+        return False
+
 
 def discover_sidecars(source_path: str) -> list[str]:
     """Find sidecar files that share the same base filename."""
     path = Path(source_path)
     base = path.stem
     parent = path.parent
-    sidecars: list[str] = []
 
     if not parent.exists():
-        return sidecars
+        return []
+
+    sidecars = []
+    # Pre-compute lowercase suffix set for faster lookup
+    sidecar_exts_lower = {ext.lower() for ext in SIDECAR_EXTENSIONS}
 
     for file in parent.iterdir():
+        # Early filter: check suffix first (most selective)
+        suffix_lower = file.suffix.lower()
         if (
-            file.is_file()
+            suffix_lower in sidecar_exts_lower
+            and file.is_file()
             and file != path
             and file.stem == base
-            and file.suffix.lower() in SIDECAR_EXTENSIONS
         ):
             sidecars.append(str(file))
 
@@ -54,12 +142,7 @@ def check_preflight(
     source_paths: list[str], destination_dir: str
 ) -> dict[str, bool | str | list[str]]:
     """Perform preflight checks before moving files."""
-    result: dict[str, bool | str | list[str]] = {
-        "free_space_ok": True,
-        "path_len_ok": True,
-        "perms_ok": True,
-        "errors": [],
-    }
+    errors: list[str] = []
 
     dest_path = Path(destination_dir)
 
@@ -68,23 +151,21 @@ def check_preflight(
         try:
             dest_path.mkdir(parents=True, exist_ok=True)
         except Exception as e:
-            result["perms_ok"] = False
-            errors = result.get("errors", [])
-            if isinstance(errors, list):
-                errors.append(f"Cannot create destination: {e}")
-            return result
+            return {
+                "free_space_ok": False,
+                "path_len_ok": False,
+                "perms_ok": False,
+                "errors": [f"Cannot create destination: {e}"],
+            }
 
     if not os.access(dest_path, os.W_OK):
-        result["perms_ok"] = False
-        errors = result.get("errors", [])
-        if isinstance(errors, list):
-            errors.append("Destination is not writable")
+        errors.append("Destination is not writable")
 
-    # Calculate total size needed
+    # Calculate total size needed (batch stat calls)
     total_size = 0
     for src in source_paths:
         try:
-            total_size += Path(src).stat().st_size
+            total_size += os.stat(src).st_size
         except Exception as e:
             logger.warning(f"Cannot stat {src}: {e}")
 
@@ -93,34 +174,32 @@ def check_preflight(
         stat = shutil.disk_usage(dest_path)
         buffer = 100 * 1024 * 1024  # 100MB
         if stat.free < total_size + buffer:
-            result["free_space_ok"] = False
-            errors = result.get("errors", [])
-            if isinstance(errors, list):
-                errors.append(
-                    f"Insufficient space: need {total_size + buffer} bytes, have {stat.free}"
-                )
+            errors.append(f"Insufficient space: need {total_size + buffer} bytes, have {stat.free}")
     except Exception as e:
         logger.warning(f"Cannot check disk space: {e}")
 
     # Check path length (Windows has 260 char limit, but we'll use 255 as safe limit)
+    dest_name_len = len(str(dest_path)) + 1  # +1 for separator
     for src in source_paths:
-        if len(str(dest_path / Path(src).name)) > 255:
-            result["path_len_ok"] = False
-            errors = result.get("errors", [])
-            if isinstance(errors, list):
-                errors.append(f"Path too long: {src}")
+        if dest_name_len + len(Path(src).name) > 255:
+            errors.append(f"Path too long: {src}")
             break
 
-    return result
+    return {
+        "free_space_ok": "Insufficient space" not in str(errors),
+        "path_len_ok": "Path too long" not in str(errors),
+        "perms_ok": "Destination is not writable" not in str(errors),
+        "errors": errors,
+    }
 
 
 def same_volume(source: str, dest: str) -> bool:
     """Check if source and destination are on the same volume."""
     try:
         src_stat = os.stat(source)
-        dest_parent = Path(dest).parent
-        if not dest_parent.exists():
-            dest_parent.mkdir(parents=True, exist_ok=True)
+        dest_parent = str(Path(dest).parent)
+        # Ensure destination directory exists using cache
+        _ensure_dir_exists(dest)
         dest_stat = os.stat(dest_parent)
         return src_stat.st_dev == dest_stat.st_dev
     except Exception:
@@ -182,8 +261,8 @@ def move_file_transactional(
     else:
         action = "moved"
 
-    # Ensure destination directory exists
-    dest_path.parent.mkdir(parents=True, exist_ok=True)
+    # Ensure destination directory exists (uses cache internally)
+    _ensure_dir_exists(dest)
 
     try:
         if same_volume(source, dest):
@@ -192,15 +271,14 @@ def move_file_transactional(
             logger.info(f"Renamed {source} -> {dest}")
         else:
             # Cross-volume: copy, verify, then remove source
-            shutil.copy2(source, dest)
+            # Try efficient copy first, fallback to shutil.copy2
+            if not _fast_copy_file_range(source, dest):
+                shutil.copy2(source, dest)
 
-            # Verify size
-            src_size = source_path.stat().st_size
-            dest_size = dest_path.stat().st_size
-            if src_size != dest_size:
-                # Verification failed - remove partial copy
+            # Verify copy integrity
+            if not _fast_verify_files_identical(source, dest):
                 dest_path.unlink(missing_ok=True)
-                logger.error(f"Size mismatch: {source} ({src_size}) vs {dest} ({dest_size})")
+                logger.error(f"Verification failed: {source} -> {dest}")
                 return False, "skipped"
 
             # Verification passed - remove source

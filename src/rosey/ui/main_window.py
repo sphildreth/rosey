@@ -276,8 +276,9 @@ class ScanWorker(QRunnable):
                     "group": group,
                 }
 
-            # Use thread pool for parallel processing
-            with ThreadPoolExecutor(max_workers=min(8, len(groups) * 2)) as executor:
+            # Use thread pool for parallel processing (ensure at least 1 worker)
+            max_workers = max(1, min(8, len(groups) * 2))
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 # Submit all videos for processing
                 futures = []
                 for group in groups:
