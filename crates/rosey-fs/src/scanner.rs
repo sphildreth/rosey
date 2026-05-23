@@ -2,19 +2,10 @@ use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ScanOptions {
     pub follow_symlinks: bool,
     pub max_depth: Option<usize>,
-}
-
-impl Default for ScanOptions {
-    fn default() -> Self {
-        Self {
-            follow_symlinks: false,
-            max_depth: None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,9 +16,8 @@ pub struct ScanResult {
     pub error: Option<String>,
 }
 
-pub const VIDEO_EXTENSIONS: &[&str] = &[
-    "mkv", "mp4", "avi", "mov", "wmv", "flv", "m4v", "mpg", "mpeg", "webm", "ts",
-];
+pub const VIDEO_EXTENSIONS: &[&str] =
+    &["mkv", "mp4", "avi", "mov", "wmv", "flv", "m4v", "mpg", "mpeg", "webm", "ts"];
 
 pub fn is_video_path(path: &Utf8Path) -> bool {
     path.extension()
@@ -52,12 +42,7 @@ pub fn scan(root: &Utf8Path, options: ScanOptions) -> Vec<ScanResult> {
                 }
 
                 let size_bytes = entry.metadata().map(|m| m.len()).unwrap_or_default();
-                Some(ScanResult {
-                    path,
-                    is_video: true,
-                    size_bytes,
-                    error: None,
-                })
+                Some(ScanResult { path, is_video: true, size_bytes, error: None })
             }
             Ok(_) => None,
             Err(error) => {

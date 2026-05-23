@@ -58,9 +58,9 @@ fn main() -> Result<()> {
         Commands::Identify { path, json } => {
             let filename = path.file_name().unwrap_or(path.as_str());
             let output = IdentifyOutput {
-                path,
+                path: path.clone(),
                 year: extract_year(filename),
-                episode: extract_episode_info(filename),
+                episode: extract_episode_info(filename, None),
             };
 
             if json {
