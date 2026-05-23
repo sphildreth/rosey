@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use thiserror::Error;
 
+use crate::journal::{JournalOp, OperationJournal};
+
 #[derive(Debug, Error)]
 pub enum MoveError {
     #[error("source does not exist: {0}")]
@@ -43,10 +45,6 @@ pub struct MoveOutcome {
     pub error: Option<String>,
 }
 
-/// Check whether source and destination are on the same filesystem volume.
-///
-/// Uses `st_dev` from `std::fs::metadata`. If either path cannot be queried,
-/// returns `false` conservatively.
 pub fn same_volume(source: &Utf8Path, dest: &Utf8Path) -> bool {
     let src_meta = match fs::metadata(source) {
         Ok(m) => m,
@@ -71,14 +69,10 @@ pub fn same_volume(source: &Utf8Path, dest: &Utf8Path) -> bool {
 
     #[cfg(not(unix))]
     {
-        // On non-Unix platforms, conservatively return false.
-        // Windows same-volume detection would need GetVolumeInformation.
         false
     }
 }
 
-/// Apply a `(1)`, `(2)`, etc. suffix to a destination path when the
-/// `KeepBoth` conflict policy is active.
 pub fn apply_conflict_suffix(dest_path: &Utf8Path) -> Utf8PathBuf {
     let parent = dest_path.parent().unwrap_or_else(|| Utf8Path::new(""));
     let stem = dest_path.file_stem().unwrap_or("");
@@ -99,25 +93,34 @@ pub fn apply_conflict_suffix(dest_path: &Utf8Path) -> Utf8PathBuf {
     }
 }
 
-/// Move a single file with transactional guarantees.
-///
-/// * `dry_run` — report what would happen without touching files.
-/// * Same volume — uses `std::fs::rename` (atomic).
-/// * Cross volume — copy, verify size, then delete source.
-/// * Conflict policies — `Skip`, `Replace`, `KeepBoth`.
 pub fn move_file_transactional(
     source: &Utf8Path,
     dest: &Utf8Path,
     conflict_policy: ConflictPolicy,
     dry_run: bool,
 ) -> Result<(bool, MoveAction), MoveError> {
+    move_file_transactional_journaled(source, dest, conflict_policy, dry_run, None)
+}
+
+pub fn move_file_transactional_journaled(
+    source: &Utf8Path,
+    dest: &Utf8Path,
+    conflict_policy: ConflictPolicy,
+    dry_run: bool,
+    journal: Option<&OperationJournal>,
+) -> Result<(bool, MoveAction), MoveError> {
     if dry_run {
         return Ok((true, MoveAction::WouldMove));
     }
 
     if !source.exists() {
+        if let Some(j) = journal {
+            j.record_error(JournalOp::Failed, source, dest, "source does not exist");
+        }
         return Err(MoveError::SourceMissing(source.to_path_buf()));
     }
+
+    let src_size = fs::metadata(source).map(|m| m.len()).unwrap_or(0);
 
     let mut action = MoveAction::Moved;
     let mut effective_dest = dest.to_path_buf();
@@ -125,59 +128,112 @@ pub fn move_file_transactional(
     if dest.exists() {
         match conflict_policy {
             ConflictPolicy::Skip => {
+                if let Some(j) = journal {
+                    j.record_op(JournalOp::Skipped, source, dest);
+                }
                 return Ok((true, MoveAction::Skipped));
             }
             ConflictPolicy::KeepBoth => {
                 effective_dest = apply_conflict_suffix(dest);
                 action = MoveAction::KeptBoth;
+                if let Some(j) = journal {
+                    j.record_op(JournalOp::KeptBoth, source, &effective_dest);
+                }
             }
             ConflictPolicy::Replace => {
                 action = MoveAction::Replaced;
+                if let Some(j) = journal {
+                    j.record_op(JournalOp::Replaced, source, dest);
+                }
             }
         }
     }
 
-    // Ensure parent directory exists
     if let Some(parent) = effective_dest.parent() {
         if let Err(e) = fs::create_dir_all(parent) {
+            if let Some(j) = journal {
+                j.record_error(JournalOp::Failed, source, &effective_dest, &e.to_string());
+            }
             return Err(MoveError::Io(format!("failed to create destination directory: {e}")));
         }
     }
 
     if same_volume(source, &effective_dest) {
-        // Same volume: atomic rename
-        if let Err(e) = fs::rename(source.as_std_path(), effective_dest.as_std_path()) {
-            return Err(MoveError::Io(format!("rename failed: {e}")));
+        if let Some(j) = journal {
+            j.record_op(JournalOp::MoveStarted, source, &effective_dest);
+        }
+
+        match fs::rename(source.as_std_path(), effective_dest.as_std_path()) {
+            Ok(_) => {
+                if let Some(j) = journal {
+                    j.record_op(JournalOp::Completed, source, &effective_dest);
+                }
+            }
+            Err(e) => {
+                if let Some(j) = journal {
+                    j.record_error(JournalOp::Failed, source, &effective_dest, &e.to_string());
+                }
+                return Err(MoveError::Io(format!("rename failed: {e}")));
+            }
         }
     } else {
-        // Cross volume: copy → verify → delete source
+        if let Some(j) = journal {
+            j.record(
+                &crate::journal::JournalEntry::now(JournalOp::CopyStarted, source, &effective_dest)
+                    .with_bytes(src_size),
+            );
+        }
+
         if let Err(e) = fs::copy(source.as_std_path(), effective_dest.as_std_path()) {
+            if let Some(j) = journal {
+                j.record_error(JournalOp::Failed, source, &effective_dest, &e.to_string());
+            }
             return Err(MoveError::Io(format!("copy failed: {e}")));
         }
 
-        // Verify by size
-        let src_size = fs::metadata(source).map(|m| m.len()).unwrap_or(u64::MAX);
         let dst_size = fs::metadata(&effective_dest).map(|m| m.len()).unwrap_or(0);
-
         if src_size != dst_size {
             let _ = fs::remove_file(effective_dest.as_std_path());
+            if let Some(j) = journal {
+                j.record_error(
+                    JournalOp::Failed,
+                    source,
+                    &effective_dest,
+                    "verification failed: destination size mismatch",
+                );
+            }
             return Err(MoveError::Io(
                 "verification failed: destination size mismatch".to_string(),
             ));
         }
 
-        // Verification passed — safe to remove source
+        if let Some(j) = journal {
+            j.record_op(JournalOp::CopyVerified, source, &effective_dest);
+        }
+
         if let Err(e) = fs::remove_file(source.as_std_path()) {
+            if let Some(j) = journal {
+                j.record_error(
+                    JournalOp::Failed,
+                    source,
+                    &effective_dest,
+                    &format!("copied and verified but failed to remove source: {e}"),
+                );
+            }
             return Err(MoveError::Io(format!(
                 "copied and verified but failed to remove source: {e}"
             )));
+        }
+
+        if let Some(j) = journal {
+            j.record_op(JournalOp::SourceDeleted, source, source);
+            j.record_op(JournalOp::Completed, source, &effective_dest);
         }
     }
 
     Ok((true, action))
 }
 
-/// Preflight check results before moving files.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PreflightResult {
     pub free_space_ok: bool,
@@ -186,11 +242,9 @@ pub struct PreflightResult {
     pub errors: Vec<String>,
 }
 
-/// Perform preflight checks before moving files.
 pub fn check_preflight(sources: &[&Utf8Path], destination_dir: &Utf8Path) -> PreflightResult {
     let mut errors = Vec::new();
 
-    // Ensure destination exists (create if needed)
     if !destination_dir.exists() {
         if let Err(e) = fs::create_dir_all(destination_dir) {
             return PreflightResult {
@@ -202,7 +256,6 @@ pub fn check_preflight(sources: &[&Utf8Path], destination_dir: &Utf8Path) -> Pre
         }
     }
 
-    // Check writability by attempting a temporary file
     let probe = destination_dir.join(".rosey_write_probe");
     match fs::write(&probe, b"") {
         Ok(_) => {
@@ -213,7 +266,6 @@ pub fn check_preflight(sources: &[&Utf8Path], destination_dir: &Utf8Path) -> Pre
         }
     }
 
-    // Calculate total size
     let mut total_size: u64 = 0;
     for src in sources {
         if let Ok(meta) = fs::metadata(src) {
@@ -221,7 +273,6 @@ pub fn check_preflight(sources: &[&Utf8Path], destination_dir: &Utf8Path) -> Pre
         }
     }
 
-    // Check free space (best-effort via fs2 or statvfs)
     #[cfg(unix)]
     {
         use std::ffi::CString;
@@ -241,7 +292,7 @@ pub fn check_preflight(sources: &[&Utf8Path], destination_dir: &Utf8Path) -> Pre
         if rc == 0 {
             let stat = unsafe { stat.assume_init() };
             let free_bytes = stat.f_bavail * stat.f_frsize;
-            let buffer = 100 * 1024 * 1024; // 100 MiB buffer
+            let buffer = 100 * 1024 * 1024;
             if free_bytes < total_size + buffer {
                 errors.push(format!(
                     "Insufficient space: need {} bytes, have {}",
@@ -252,8 +303,7 @@ pub fn check_preflight(sources: &[&Utf8Path], destination_dir: &Utf8Path) -> Pre
         }
     }
 
-    // Check path length
-    let dest_prefix_len = destination_dir.as_str().len() + 1; // +1 for separator
+    let dest_prefix_len = destination_dir.as_str().len() + 1;
     for src in sources {
         if let Some(name) = src.file_name() {
             if dest_prefix_len + name.len() > 255 {
@@ -274,19 +324,25 @@ fn build_preflight(errors: Vec<String>) -> PreflightResult {
     PreflightResult { free_space_ok, path_len_ok, perms_ok, errors }
 }
 
-/// Move a media item and its sidecars transactionally.
-///
-/// If any file fails to move, already-moved files are rolled back (deleted).
 pub fn move_with_sidecars(
     item: &MediaItem,
     destination: &Utf8Path,
     conflict_policy: ConflictPolicy,
     dry_run: bool,
 ) -> MoveResult {
+    move_with_sidecars_journaled(item, destination, conflict_policy, dry_run, None)
+}
+
+pub fn move_with_sidecars_journaled(
+    item: &MediaItem,
+    destination: &Utf8Path,
+    conflict_policy: ConflictPolicy,
+    dry_run: bool,
+    journal: Option<&OperationJournal>,
+) -> MoveResult {
     let source = &item.source_path;
     let sidecars = crate::discover_sidecars(source);
 
-    // Collect all sources
     let mut all_sources: Vec<Utf8PathBuf> = Vec::with_capacity(1 + sidecars.len());
     all_sources.push(source.clone());
     all_sources.extend(sidecars.clone());
@@ -302,29 +358,33 @@ pub fn move_with_sidecars(
         errors: Vec::new(),
     };
 
-    // Preflight
     let dest_dir = destination.parent().unwrap_or_else(|| Utf8Path::new(""));
     let preflight =
         check_preflight(&all_sources.iter().map(|p| p.as_ref()).collect::<Vec<_>>(), dest_dir);
 
     if !preflight.free_space_ok || !preflight.path_len_ok || !preflight.perms_ok {
+        if let Some(j) = journal {
+            j.record_error(JournalOp::Failed, source, destination, "preflight checks failed");
+        }
         result.errors = preflight.errors;
         return result;
     }
 
-    // Move main file
-    match move_file_transactional(source, destination, conflict_policy, dry_run) {
+    match move_file_transactional_journaled(source, destination, conflict_policy, dry_run, journal)
+    {
         Ok((true, action)) => {
             record_action(&mut result, action, destination);
             moved_files.push(destination.to_path_buf());
         }
         Ok((false, _)) | Err(_) => {
             result.errors.push(format!("Failed to move {source}"));
+            if let Some(j) = journal {
+                j.record_error(JournalOp::Failed, source, destination, "move failed");
+            }
             return result;
         }
     }
 
-    // Move sidecars
     let dest_parent = destination.parent().unwrap_or_else(|| Utf8Path::new(""));
     let dest_stem = destination.file_stem().unwrap_or("");
 
@@ -336,18 +396,31 @@ pub fn move_with_sidecars(
             dest_parent.join(format!("{}.{}", dest_stem, sidecar_ext))
         };
 
-        match move_file_transactional(sidecar, &sidecar_dest, conflict_policy, dry_run) {
+        match move_file_transactional_journaled(
+            sidecar,
+            &sidecar_dest,
+            conflict_policy,
+            dry_run,
+            journal,
+        ) {
             Ok((true, action)) => {
                 record_action(&mut result, action, &sidecar_dest);
                 moved_files.push(sidecar_dest);
             }
             Ok((false, _)) | Err(_) => {
-                // Rollback
                 if !dry_run {
                     for moved in &moved_files {
                         let _ = fs::remove_file(moved.as_std_path());
                     }
                     result.rollback_performed = true;
+                    if let Some(j) = journal {
+                        j.record_error(
+                            JournalOp::RolledBack,
+                            sidecar,
+                            &sidecar_dest,
+                            "rollback after sidecar move failure",
+                        );
+                    }
                 }
                 result.errors.push(format!("Failed to move sidecar {sidecar}, rolled back"));
                 return result;

@@ -14,6 +14,7 @@ libc.workspace = true
 camino.workspace = true
 rosey-core = { path = "../rosey-core" }
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 walkdir.workspace = true

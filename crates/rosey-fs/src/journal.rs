@@ -81,8 +81,7 @@ impl OperationJournal {
         let filename = format!("{prefix}_{timestamp}.journal");
         let full_path = path.join(filename);
 
-        let file =
-            OpenOptions::new().write(true).create_new(true).open(full_path.as_std_path())?;
+        let file = OpenOptions::new().write(true).create_new(true).open(full_path.as_std_path())?;
 
         Ok(Self { writer: Mutex::new(Some(file)), path: full_path })
     }
@@ -207,10 +206,26 @@ mod tests {
     #[test]
     fn journal_detects_incomplete_transfers() {
         let entries = vec![
-            JournalEntry::now(JournalOp::MoveStarted, Utf8Path::new("/src/a.mkv"), Utf8Path::new("/dst/a.mkv")),
-            JournalEntry::now(JournalOp::Completed, Utf8Path::new("/src/a.mkv"), Utf8Path::new("/dst/a.mkv")),
-            JournalEntry::now(JournalOp::MoveStarted, Utf8Path::new("/src/b.mkv"), Utf8Path::new("/dst/b.mkv")),
-            JournalEntry::now(JournalOp::CopyStarted, Utf8Path::new("/src/c.mkv"), Utf8Path::new("/dst/c.mkv")),
+            JournalEntry::now(
+                JournalOp::MoveStarted,
+                Utf8Path::new("/src/a.mkv"),
+                Utf8Path::new("/dst/a.mkv"),
+            ),
+            JournalEntry::now(
+                JournalOp::Completed,
+                Utf8Path::new("/src/a.mkv"),
+                Utf8Path::new("/dst/a.mkv"),
+            ),
+            JournalEntry::now(
+                JournalOp::MoveStarted,
+                Utf8Path::new("/src/b.mkv"),
+                Utf8Path::new("/dst/b.mkv"),
+            ),
+            JournalEntry::now(
+                JournalOp::CopyStarted,
+                Utf8Path::new("/src/c.mkv"),
+                Utf8Path::new("/dst/c.mkv"),
+            ),
         ];
 
         let incomplete = OperationJournal::find_incomplete_transfers(&entries);

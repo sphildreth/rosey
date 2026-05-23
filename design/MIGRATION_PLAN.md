@@ -20,12 +20,12 @@ Expected layout:
 
 ## Migration sequence
 
-### Phase 0 — Preserve Python behavior [PARTIAL]
+### Phase 0 — Preserve Python behavior [COMPLETE]
 
 - [x] leave Python repo working
-- [ ] tag a final Python baseline when ready
-- [ ] add golden exporter scripts only if useful
-- [ ] collect fixtures for important edge cases
+- [x] tag a final Python baseline when ready (tag: `python-baseline`)
+- [x] add golden exporter scripts only if useful (`scripts/golden_exporter.py`)
+- [x] collect fixtures for important edge cases (`tests/fixtures/`: media_tree_001, media_tree_sidecars, media_tree_conflicts, nfo, filenames)
 
 ### Phase 1 — Rust workspace [COMPLETE]
 
@@ -62,11 +62,11 @@ Expected layout:
 - [x] port error behavior
 - [x] compare scan outputs on fixture trees
 
-### Phase 6 — Mover safety [MOSTLY DONE]
+### Phase 6 — Mover safety [COMPLETE]
 
 - [x] implement dry-run first
 - [x] add preflight checks
-- [ ] add operation journal (see ADR-0005; not yet implemented)
+- [x] add operation journal (see ADR-0005; `crates/rosey-fs/src/journal.rs`)
 - [x] implement same-volume move
 - [x] implement cross-volume copy+verify+delete
 - [x] implement sidecar moves
@@ -78,12 +78,12 @@ Expected layout:
 - [x] make JSON output stable
 - [x] use CLI for parity testing
 
-### Phase 8 — TUI [NOT STARTED]
+### Phase 8 — TUI [COMPLETE]
 
-- [ ] build Ratatui app state
-- [ ] render dashboards and result tables
-- [ ] wire engine event stream
-- [ ] require confirmation before destructive execution
+- [x] build Ratatui app state (`crates/rosey-tui/src/app.rs` — Screen, AppState, IdentifiedItem, TransferItem, sorting)
+- [x] render dashboards and result tables (7 screens: Dashboard, Scan Results, Plan Preview, Transfer Queue, Logs/Recovery, Settings, Help)
+- [x] wire engine event stream (scan/identify/plan/move driven by keyboard with state machine)
+- [x] require confirmation before destructive execution (confirmation dialog with [y]/[n] for live mode)
 
 ### Phase 9 — Metadata [COMPLETE]
 

@@ -1953,6 +1953,7 @@ dependencies = [
  "libc",
  "rosey-core",
  "serde",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.18",
  "tracing",
@@ -1980,10 +1981,12 @@ name = "rosey-tui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "camino",
  "crossterm",
  "ratatui",
  "rosey-core",
  "rosey-fs",
+ "serde",
  "tracing",
  "tracing-subscriber",
 ]

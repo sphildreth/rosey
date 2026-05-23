@@ -9,9 +9,11 @@ rust-version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+camino.workspace = true
 crossterm.workspace = true
 ratatui.workspace = true
 rosey-core = { path = "../rosey-core" }
 rosey-fs = { path = "../rosey-fs" }
+serde.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
