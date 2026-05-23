@@ -12,6 +12,9 @@ pub fn is_sidecar_path(path: &Utf8Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Discover sidecar files that share the same base filename in the same directory.
+///
+/// Mirrors Python `discover_sidecars` from `rosey.mover.mover`.
 pub fn discover_sidecars(media_path: &Utf8Path) -> Vec<Utf8PathBuf> {
     let Some(parent) = media_path.parent() else {
         return Vec::new();
@@ -26,6 +29,7 @@ pub fn discover_sidecars(media_path: &Utf8Path) -> Vec<Utf8PathBuf> {
 
     entries
         .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().map(|ft| ft.is_file()).unwrap_or(false))
         .filter_map(|entry| Utf8PathBuf::from_path_buf(entry.path()).ok())
         .filter(|candidate| candidate != media_path)
         .filter(|candidate| candidate.file_stem() == Some(stem))
