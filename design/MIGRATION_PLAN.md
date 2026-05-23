@@ -20,85 +20,85 @@ Expected layout:
 
 ## Migration sequence
 
-### Phase 0 — Preserve Python behavior
+### Phase 0 — Preserve Python behavior [PARTIAL]
 
-- leave Python repo working
-- tag a final Python baseline when ready
-- add golden exporter scripts only if useful
-- collect fixtures for important edge cases
+- [x] leave Python repo working
+- [ ] tag a final Python baseline when ready
+- [ ] add golden exporter scripts only if useful
+- [ ] collect fixtures for important edge cases
 
-### Phase 1 — Rust workspace
+### Phase 1 — Rust workspace [COMPLETE]
 
-- create workspace
-- create crates
-- add AGENTS.md
-- add PRD/SPEC/ADRs
-- add CI
+- [x] create workspace
+- [x] create crates
+- [x] add AGENTS.md
+- [x] add PRD/SPEC/ADRs
+- [x] add CI
 
-### Phase 2 — Core models
+### Phase 2 — Core models [COMPLETE]
 
-- port Pydantic model shapes into typed Rust structs
-- serialize/deserialize to JSON
-- ensure model JSON can be compared to Python output
+- [x] port Pydantic model shapes into typed Rust structs
+- [x] serialize/deserialize to JSON
+- [x] ensure model JSON can be compared to Python output
 
-### Phase 3 — Parser parity
+### Phase 3 — Parser parity [COMPLETE]
 
-- port filename pattern logic
-- port year/date/episode/part extraction
-- port title cleanup
-- add parity/golden tests
+- [x] port filename pattern logic
+- [x] port year/date/episode/part extraction
+- [x] port title cleanup
+- [x] add parity/golden tests
 
-### Phase 4 — Planner parity
+### Phase 4 — Planner parity [COMPLETE]
 
-- port Jellyfin destination path logic
-- port sanitization rules
-- port conflict suffix behavior
-- add snapshot tests
+- [x] port Jellyfin destination path logic
+- [x] port sanitization rules
+- [x] port conflict suffix behavior
+- [x] add snapshot tests
 
-### Phase 5 — Scanner parity
+### Phase 5 — Scanner parity [COMPLETE]
 
-- port extension filtering
-- port symlink behavior
-- port error behavior
-- compare scan outputs on fixture trees
+- [x] port extension filtering
+- [x] port symlink behavior
+- [x] port error behavior
+- [x] compare scan outputs on fixture trees
 
-### Phase 6 — Mover safety
+### Phase 6 — Mover safety [MOSTLY DONE]
 
-- implement dry-run first
-- add preflight checks
-- add operation journal
-- implement same-volume move
-- implement cross-volume copy+verify+delete
-- implement sidecar moves
-- implement rollback/recovery tests
+- [x] implement dry-run first
+- [x] add preflight checks
+- [ ] add operation journal (see ADR-0005; not yet implemented)
+- [x] implement same-volume move
+- [x] implement cross-volume copy+verify+delete
+- [x] implement sidecar moves
+- [x] implement rollback/recovery tests
 
-### Phase 7 — CLI
+### Phase 7 — CLI [COMPLETE]
 
-- expose scan/identify/plan/move
-- make JSON output stable
-- use CLI for parity testing
+- [x] expose scan/identify/plan/move
+- [x] make JSON output stable
+- [x] use CLI for parity testing
 
-### Phase 8 — TUI
+### Phase 8 — TUI [NOT STARTED]
 
-- build Ratatui app state
-- render dashboards and result tables
-- wire engine event stream
-- require confirmation before destructive execution
+- [ ] build Ratatui app state
+- [ ] render dashboards and result tables
+- [ ] wire engine event stream
+- [ ] require confirmation before destructive execution
 
-### Phase 9 — Metadata
+### Phase 9 — Metadata [COMPLETE]
 
-- port provider interfaces
-- port cache
-- add TMDB/TVDB support
-- keep offline identification fully functional without providers
+- [x] port provider interfaces
+- [x] port cache
+- [x] add TMDB/TVDB support
+- [x] keep offline identification fully functional without providers
 
-### Phase 10 — Cutover
+### Phase 10 — Cutover [NOT STARTED]
 
-- freeze Python repo
-- tag final Python version
-- rename old `rosey` to `rosey-python-archive`
-- rename `rosey-rust` to `rosey`
-- update README, badges, links, releases
+- [ ] freeze Python repo
+- [ ] tag final Python version
+- [ ] rename old `rosey` to `rosey-python-archive`
+- [ ] rename `rosey-rust` to `rosey`
+- [ ] update README, badges, links, releases
 
 ## Agent rule
 

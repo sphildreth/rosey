@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<tvshow>
+  <title>Example Show</title>
+  <year>2020</year>
+  <imdbid>tt1234567</imdbid>
+  <tmdbid>12345</tmdbid>
+</tvshow>
