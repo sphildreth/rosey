@@ -1,102 +1,104 @@
-# AGENTS.md — Rosey Rust
+# Rosey Rust Agent Instructions
 
-This file is for coding agents working on Rosey Rust.
+Rosey Rust is a Rust rewrite of the existing Python/PySide6 Rosey media organizer. Rosey organizes Movies and TV Shows into Jellyfin-friendly folders.
 
-## Prime directive
-
-Rosey Rust is a module-by-module rewrite of the existing Python/PySide6 Rosey project.
-
-Do not invent behavior when the Python implementation or tests already define it. Preserve useful behavior by reading the existing repo, extracting fixtures/golden outputs, and implementing Rust parity.
-
-Expected local sibling layout:
+## Repository Layout
 
 ```text
-../rosey        existing Python implementation
-../rosey-rust   this repository
+/docs       user-facing documentation only
+/design     design docs, ADRs, prompts, migration strategy
+/design/adr architectural decision records
+crates/     Rust workspace crates
+tests/      cross-crate fixtures, golden files, integration assets
 ```
 
-## Repository conventions
+Expected sibling layout:
 
-- `/docs` is user-facing documentation.
-- `/design` is for product/design/specification material, ADRs, prompts, and migration plans.
-- `/design/adr` contains ADRs.
-- `/design/prompts` contains reusable coding-agent prompts.
-- Rust code lives under `/crates`.
-- Fixture and golden test data lives under `/tests`.
+```text
+../rosey        existing Python/PySide6 reference implementation
+../rosey-rust   new Rust implementation
+```
 
-## Required workflow for migration work
+## Read First
 
-For each migrated behavior:
+Before changing code, read the smallest relevant set:
 
-1. Identify the relevant Python module and tests in `../rosey`.
-2. Summarize the behavior in the PR/commit message.
-3. Add or update fixtures/golden files when appropriate.
-4. Implement only the corresponding Rust module.
-5. Add Rust tests.
-6. Run:
-   - `cargo fmt --all`
-   - `cargo clippy --workspace --all-targets -- -D warnings`
-   - `cargo test --workspace`
-7. Update design docs if behavior or architecture changes.
-8. Add an ADR for significant architecture changes.
+1. `design/SPEC.md`
+2. `design/MIGRATION_STRATEGY.md`
+3. `design/adr/`
+4. the relevant `crates/*`
+5. the matching Python source in `../rosey` when porting behavior
 
-## Scope control
+## Non-Negotiables
 
-Do not rewrite unrelated crates while doing a focused migration task.
+- Do not mutate `../rosey` unless the user explicitly asks. Treat it as the behavioral reference.
+- Do not make broad rewrites. Work one migration slice at a time.
+- Do not implement destructive file operations without dry-run behavior, temp-dir tests, and a recovery/journal plan.
+- Keep `/docs` user-facing and `/design` for design, ADRs, prompts, and migration notes.
+- Add or update an ADR for architecture-significant changes.
+- CLI and core engine behavior must be testable before TUI screens depend on it.
+- Prefer explicit, typed domain models over stringly-typed behavior.
+- Keep UI code out of `rosey-core`.
+- Preserve Python behavior during parity phases, even if a cleanup seems tempting. Record desired improvements separately.
 
-Good task:
+## Required Quality Gates
 
-> Port filename year and episode parsing from Python `patterns.py` into `rosey-core::patterns`, including parity tests.
-
-Bad task:
-
-> Port patterns, scanner, mover, metadata, and TUI all at once.
-
-## Safety rules for filesystem work
-
-File move/copy code is high risk.
-
-Never implement destructive behavior without:
-
-- dry-run tests
-- temp-dir integration tests
-- conflict-policy tests
-- rollback/journal tests
-- clear error handling
-- explicit user confirmation in TUI/CLI before execute mode
-
-Default behavior must be dry-run unless the command clearly requests execution.
-
-## Testing expectations
-
-Use:
-
-- Rust unit tests for pure behavior
-- integration tests for filesystem behavior
-- `insta` for golden JSON snapshots
-- `proptest` for parser/sanitizer properties where useful
-- temp directories for mover tests
-
-Do not remove Python-derived golden files unless the design docs and ADRs explain why behavior intentionally changed.
-
-## Documentation expectations
-
-Update `/docs` for user-facing behavior.
-
-Update `/design` for implementation strategy, prompts, and architectural decisions.
-
-Use ADRs for meaningful decisions:
+Run before finishing:
 
 ```bash
-./scripts/new-adr.sh "Decision title"
+cargo fmt --all --check
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-## Rust style
+When changing docs or prompts, also check links and file locations.
 
-- Prefer small, explicit modules.
-- Prefer typed domain models over loose maps.
-- Use `thiserror` for library errors.
-- Use `anyhow` at binary boundaries.
-- Use `tracing` for structured logs.
-- Keep UI crates thin. The core engine must not depend on the TUI.
-- Avoid `unsafe` unless an ADR explicitly approves it.
+## Crate Boundaries
+
+```text
+rosey-core       domain models, parsing, planner, scoring; no UI
+rosey-fs         scanning, file ops, sidecars, transfer engine
+rosey-metadata   provider clients, cache, metadata adapters
+rosey-cli        headless command interface and parity harness
+rosey-tui        Ratatui/Crossterm UI only
+```
+
+Dependency direction:
+
+```text
+rosey-fs       -> rosey-core
+rosey-metadata -> rosey-core
+rosey-cli      -> rosey-core, rosey-fs, rosey-metadata
+rosey-tui      -> rosey-core, rosey-fs, rosey-metadata
+```
+
+No circular dependencies.
+
+## Testing Strategy
+
+Use the old Python repo to create behavior parity where possible.
+
+Recommended Rust testing tools:
+
+```text
+insta              snapshot/golden tests
+proptest           property-based parser/path tests
+tempfile           filesystem integration tests
+assert_cmd         CLI tests
+pretty_assertions  readable diffs
+```
+
+## Output Expectations
+
+Every agent response should include:
+
+```text
+Files changed
+Behavior implemented
+Tests added/updated
+Commands run
+Known gaps
+Recommended next step
+```
+
+If a quality gate cannot be run, say so plainly and explain why.

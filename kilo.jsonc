@@ -1,0 +1,17 @@
+{
+  // Project-level Kilo instructions for Rosey Rust.
+  // AGENTS.md is loaded automatically by Kilo, but it is also listed here so
+  // non-default configurations still pick it up.
+  "instructions": [
+    "AGENTS.md",
+    ".kilo/rules/*.md"
+  ],
+
+  // Project skills are also auto-discovered from .kilo/skills, but keeping
+  // this explicit makes the repository intent clear.
+  "skills": {
+    "paths": [
+      ".kilo/skills"
+    ]
+  }
+}
