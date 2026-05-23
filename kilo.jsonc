@@ -1,4 +1,5 @@
 {
+  "$schema": "https://app.kilo.ai/config.json",
   // Project-level Kilo instructions for Rosey Rust.
   // AGENTS.md is loaded automatically by Kilo, but it is also listed here so
   // non-default configurations still pick it up.
