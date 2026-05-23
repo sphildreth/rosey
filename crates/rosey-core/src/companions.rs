@@ -51,7 +51,9 @@ pub fn discover_companion_files(media_path: &Utf8Path) -> Vec<Utf8PathBuf> {
         if file_type.is_file() {
             if let Some(ext) = path.extension() {
                 let ext_lower = ext.to_lowercase();
-                if subtitle_exts.contains(ext_lower.as_str()) || image_exts.contains(ext_lower.as_str()) {
+                if subtitle_exts.contains(ext_lower.as_str())
+                    || image_exts.contains(ext_lower.as_str())
+                {
                     companions.push(path);
                 }
             }
