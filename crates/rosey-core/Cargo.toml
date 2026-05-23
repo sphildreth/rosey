@@ -10,6 +10,7 @@ rust-version.workspace = true
 [dependencies]
 camino.workspace = true
 once_cell.workspace = true
+quick-xml.workspace = true
 regex.workspace = true
 serde.workspace = true
 thiserror.workspace = true
@@ -18,3 +19,4 @@ thiserror.workspace = true
 pretty_assertions.workspace = true
 proptest.workspace = true
 serde_json.workspace = true
+tempfile.workspace = true
