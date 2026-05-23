@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio::sync::Mutex;
 
 /// Token-bucket rate limiter.
 ///
@@ -17,7 +18,7 @@ impl RateLimiter {
 
     /// Acquire a token, blocking if necessary.
     pub async fn acquire(&self) {
-        let mut times = self.last_request_times.lock().unwrap();
+        let mut times = self.last_request_times.lock().await;
         let now = Instant::now();
 
         // Remove timestamps older than 1 second
@@ -37,7 +38,7 @@ impl RateLimiter {
                 drop(times);
                 tokio::time::sleep(sleep_time).await;
                 // Re-acquire lock and clean up again
-                let mut times = self.last_request_times.lock().unwrap();
+                let mut times = self.last_request_times.lock().await;
                 let now = Instant::now();
                 while let Some(front) = times.front() {
                     if now.duration_since(*front) >= Duration::from_secs(1) {
@@ -121,11 +122,7 @@ impl TmdbProvider {
                     tokio::time::sleep(Duration::from_secs(2)).await;
                     return Box::pin(self._request(endpoint, params, retry_count + 1)).await;
                 }
-                if let Ok(body) = resp.json::<T>().await {
-                    Some(body)
-                } else {
-                    None
-                }
+                resp.json::<T>().await.ok()
             }
             Err(_) => None,
         }
@@ -189,15 +186,14 @@ impl TmdbProvider {
 /// Mirrors Python `TVDBProvider` from `rosey/providers/tvdb.py`.
 pub struct TvdbProvider {
     api_key: String,
-    language: String,
+    _language: String,
     client: reqwest::Client,
-    token: Arc<Mutex<Option<String>>>,
-    token_expires: Arc<Mutex<Instant>>,
+    token: Arc<std::sync::Mutex<Option<String>>>,
+    token_expires: Arc<std::sync::Mutex<Instant>>,
 }
 
 impl TvdbProvider {
     const BASE_URL: &'static str = "https://api4.thetvdb.com/v4";
-    const MAX_RPS: usize = 2;
 
     pub fn new(api_key: impl Into<String>) -> Self {
         Self::with_options(api_key, "eng", Duration::from_secs(10))
@@ -213,10 +209,10 @@ impl TvdbProvider {
 
         Self {
             api_key: api_key.into(),
-            language: language.into(),
+            _language: language.into(),
             client,
-            token: Arc::new(Mutex::new(None)),
-            token_expires: Arc::new(Mutex::new(Instant::now())),
+            token: Arc::new(std::sync::Mutex::new(None)),
+            token_expires: Arc::new(std::sync::Mutex::new(Instant::now())),
         }
     }
 

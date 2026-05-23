@@ -34,7 +34,7 @@ impl ProviderCache {
             .conn
             .prepare(
                 "SELECT data, updated_at FROM cache
-                 WHERE provider = ? AND kind = ? AND key = ?",
+                 WHERE provider = ?1 AND kind = ?2 AND key = ?3",
             )
             .ok()?;
 
@@ -48,10 +48,10 @@ impl ProviderCache {
 
             let now = now_secs();
             if now - updated_at as u64 > self.ttl_seconds {
-                // Expired — delete
+                // Expired — delete using bound parameters
                 let _ = self
                     .conn
-                    .execute("DELETE FROM cache WHERE provider = ? AND kind = ? AND key = ?");
+                    .execute("DELETE FROM cache WHERE provider = ?1 AND kind = ?2 AND key = ?3");
                 return None;
             }
 
@@ -72,16 +72,16 @@ impl ProviderCache {
         let data_json = serde_json::to_string(data).unwrap_or_default();
         let now = now_secs() as i64;
 
-        let sql = format!(
+        let mut stmt = self.conn.prepare(
             "INSERT OR REPLACE INTO cache (provider, kind, key, data, updated_at)
-             VALUES ('{}', '{}', '{}', '{}', {})",
-            escape_sql(provider),
-            escape_sql(kind),
-            escape_sql(key),
-            escape_sql(&data_json),
-            now
-        );
-        self.conn.execute(&sql)?;
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+        )?;
+        stmt.bind((1, provider))?;
+        stmt.bind((2, kind))?;
+        stmt.bind((3, key))?;
+        stmt.bind((4, data_json.as_str()))?;
+        stmt.bind((5, now))?;
+        stmt.next()?;
         Ok(())
     }
 
@@ -130,8 +130,4 @@ pub struct CacheStats {
 
 fn now_secs() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
-}
-
-fn escape_sql(s: &str) -> String {
-    s.replace('\'', "''")
 }
