@@ -2,10 +2,12 @@ use anyhow::Result;
 use camino::Utf8PathBuf;
 use clap::{Parser, Subcommand, ValueEnum};
 use rosey_core::{
-    load_config, ConfidenceBand, ConfidenceThresholds, ConflictPolicy, MediaItem, MediaKind,
-    RoseyConfig, Score,
+    load_config, save_config as save_rosey_config, score_identification_result, ConfidenceBand,
+    ConfidenceThresholds, ConflictPolicy, IdentifyOptions, MediaItem, MediaKind, RoseyConfig,
+    Score,
 };
 use rosey_fs::{move_with_sidecars, Scanner};
+use rosey_metadata::identify_file_with_metadata;
 use serde::Serialize;
 
 #[derive(Debug, Parser)]
@@ -50,6 +52,8 @@ enum Commands {
         conflict_policy: Option<ConflictPolicyArg>,
         #[arg(long)]
         json: bool,
+        #[arg(long)]
+        save_config: bool,
     },
 }
 
@@ -101,7 +105,8 @@ struct RunOutput {
     errors: Vec<String>,
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     tracing_subscriber::fmt().with_env_filter("warn").init();
 
     let cli = Cli::parse();
@@ -126,7 +131,9 @@ fn main() -> Result<()> {
         }
 
         Commands::Identify { path, json } => {
-            let item = rosey_core::identify_file(&path);
+            let ident =
+                identify_file_with_metadata(&path, &config, IdentifyOptions::default()).await;
+            let item = ident.item;
             let nfo_path = rosey_core::find_nfo_for_file(&path);
 
             let output = IdentifyOutput {
@@ -163,7 +170,11 @@ fn main() -> Result<()> {
             confidence,
             conflict_policy,
             json,
+            save_config,
         } => {
+            let source_cli = source.clone();
+            let movies_target_cli = movies_target.clone();
+            let tv_target_cli = tv_target.clone();
             let Some(source) = resolve_config_path(source, &config.paths.source) else {
                 eprintln!("Error: No source directory specified. Provide SOURCE or set paths.source in config.");
                 std::process::exit(2);
@@ -175,6 +186,16 @@ fn main() -> Result<()> {
             let confidence = resolve_confidence(confidence, &config);
             let conflict_policy =
                 resolve_conflict_policy(conflict_policy, &config.behavior.conflict_policy);
+
+            if save_config {
+                let config_to_save = apply_cli_paths_to_config(
+                    &config,
+                    source_cli.as_ref(),
+                    movies_target_cli.as_ref(),
+                    tv_target_cli.as_ref(),
+                );
+                save_rosey_config(&config_to_save)?;
+            }
 
             if !source.exists() {
                 eprintln!("Error: Source directory does not exist: {source}");
@@ -194,8 +215,14 @@ fn main() -> Result<()> {
             let mut results: Vec<RunResultItem> = Vec::new();
 
             for scan_result in &video_files {
-                let item = rosey_core::identify_file(&scan_result.path);
-                let score = rosey_core::score_identification(&item);
+                let ident = identify_file_with_metadata(
+                    &scan_result.path,
+                    &config,
+                    IdentifyOptions::default(),
+                )
+                .await;
+                let score = score_identification_result(&ident);
+                let item = ident.item;
 
                 if score.confidence < confidence {
                     continue;
@@ -333,6 +360,27 @@ fn resolve_conflict_policy(
     })
 }
 
+fn apply_cli_paths_to_config(
+    config: &RoseyConfig,
+    source: Option<&Utf8PathBuf>,
+    movies_target: Option<&Utf8PathBuf>,
+    tv_target: Option<&Utf8PathBuf>,
+) -> RoseyConfig {
+    let mut config = config.clone();
+
+    if let Some(source) = source {
+        config.paths.source = source.to_string();
+    }
+    if let Some(movies_target) = movies_target {
+        config.paths.movies = movies_target.to_string();
+    }
+    if let Some(tv_target) = tv_target {
+        config.paths.tv = tv_target.to_string();
+    }
+
+    config
+}
+
 fn configured_confidence_band(confidence: u8, thresholds: &ConfidenceThresholds) -> ConfidenceBand {
     let high = thresholds.green.max(thresholds.yellow);
     let low = thresholds.green.min(thresholds.yellow);
@@ -431,5 +479,24 @@ mod tests {
             ConflictPolicy::KeepBoth
         );
         assert_eq!(resolve_conflict_policy(None, "ask"), ConflictPolicy::Skip);
+    }
+
+    #[test]
+    fn apply_cli_paths_to_config_only_overrides_explicit_values() {
+        let mut config = RoseyConfig::default();
+        config.paths.source = "/config/source".into();
+        config.paths.movies = "/config/movies".into();
+        config.paths.tv = "/config/tv".into();
+
+        let updated = apply_cli_paths_to_config(
+            &config,
+            Some(&Utf8PathBuf::from("/cli/source")),
+            None,
+            Some(&Utf8PathBuf::from("/cli/tv")),
+        );
+
+        assert_eq!(updated.paths.source, "/cli/source");
+        assert_eq!(updated.paths.movies, "/config/movies");
+        assert_eq!(updated.paths.tv, "/cli/tv");
     }
 }

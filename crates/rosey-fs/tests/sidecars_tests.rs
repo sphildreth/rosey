@@ -152,3 +152,26 @@ fn discover_different_stem_ignored() {
     // "movie.en.srt" has stem "movie.en", not "movie"
     assert!(sidecars.is_empty());
 }
+
+#[cfg(unix)]
+mod symlink_tests {
+    use super::*;
+    use std::os::unix::fs::symlink;
+
+    #[test]
+    fn discover_includes_symlinked_sidecar_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+
+        make_file(dir, "movie.mkv", "video");
+        make_file(dir, "actual_subtitle.srt", "subs");
+        symlink(dir.join("actual_subtitle.srt"), dir.join("movie.srt")).unwrap();
+
+        let media_path = dir.join("movie.mkv");
+        let media = Utf8Path::from_path(&media_path).unwrap();
+        let sidecars = discover_sidecars(media);
+
+        assert_eq!(sidecars.len(), 1);
+        assert!(sidecars.iter().any(|path| path.file_name() == Some("movie.srt")));
+    }
+}

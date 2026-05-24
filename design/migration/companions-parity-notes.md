@@ -21,6 +21,7 @@ Complete. Python `Identifier._discover_companion_files` behavior ported to `crat
 - **Recursive scanning**: deeply nested subtitle files found (e.g., `Subs/English/Forced/en.forced.srt`)
 - **Multiple formats**: all 3 subtitle formats discovered from a single folder
 - **Mixed locations**: same-directory + subdirectory companions both found
+- **Symlinked files included**: symlinks to companion files are discovered like Python `Path.is_file()`
 - **Non-subtitle folders ignored**: `Extras/should_not_find.srt` is not discovered
 - **Nonexistent parent**: returns empty `Vec`
 - **Files without extension**: ignored
@@ -35,15 +36,13 @@ Complete. Python `Identifier._discover_companion_files` behavior ported to `crat
 | Subtitle extensions | 10+ (`.srt`, `.ssa`, `.ass`, `.vtt`, `.sub`, `.idx`, etc.) | 3 (`.srt`, `.ass`, `.vtt`) |
 | Recursive | No | Yes (into `Subs/` etc.) |
 
-## Known Gaps / Intentional Deviations
+## Intentional Deviations
 
 1. **No caching**: Python `Identifier` has `_duration_cache`, `_show_folder_cache`, etc. Caching is an optimization to add later.
 2. **No logging**: Python silently catches `OSError`/`PermissionError`. Rust does the same via `let Ok(entries) = fs::read_dir(...)`.
-3. **No symlink following**: Rust `file_type()` does not follow symlinks. Python `item.is_file()` does. This is a minor semantic difference.
-
 ## Test Coverage
 
-15 tests in `crates/rosey-core/tests/companions_tests.rs`:
+16 tests in `crates/rosey-core/tests/companions_tests.rs`:
 
 - `same_directory_subtitle`
 - `same_directory_image`
@@ -60,6 +59,7 @@ Complete. Python `Identifier._discover_companion_files` behavior ported to `crat
 - `ignores_other_folders`
 - `nonexistent_parent_returns_empty`
 - `no_extension_ignored`
+- `symlink_tests::recursive_subtitle_scan_includes_symlinked_file`
 
 All tests use `tempfile::tempdir()` — no real user media paths touched.
 
@@ -70,13 +70,6 @@ All passing:
 - `cargo test --workspace` (131 passed total)
 - `cargo clippy --workspace --all-targets -- -D warnings`
 
-## Recommended Next Slice
+## Recommended Next Step
 
-**Move/copy engine parity** — port Python `move_file_transactional` and `move_with_sidecars` from `rosey/mover/mover.py`. This requires:
-- Dry-run mode
-- Conflict policy handling (`skip`, `replace`, `keep_both`)
-- Same-volume rename vs cross-volume copy-verify-delete
-- Transactional rollback on failure
-- Preflight checks (space, permissions, path length)
-
-Per the file-safety skill, this slice should include an ADR review before implementing destructive operations.
+Companion discovery parity is complete. Add new Python fixture cases here only when real-world media libraries expose additional companion layouts.

@@ -39,19 +39,13 @@
 - TMDB ID extraction from file path and parent directories
 - Title cleanup: separator conversion, space collapsing, episode pattern removal, quality/codec removal, Vol preservation, hyphenated-compound restoration
 
-## Known Gaps / Deviations
+## Intentional Deviations / Implementation Notes
 
 1. **Date validation** — Rust `extract_date` rejects `month == 0` or `day == 0`; Python accepts them and would format `0000-00-00`. This is stricter and arguably safer.
 2. **Year regex** — Python uses look-ahead `(?=[._\s-]|$)` in `YEAR_PATTERN`. Rust regex crate does not support look-ahead. We replaced with a non-capturing trailing boundary `(?:[._\s-]|$)` and added manual boundary checks in `extract_year`. The behavior is equivalent for all tested cases.
-3. **Title cleanup completeness** — `clean_title_with_year` is a substantial port but not every Python edge case is guaranteed identical (e.g., some compound descriptor multi-word sequences, or very rare release-group names). Coverage is strong for the fixture CSV examples.
-4. **NFO / sidecar / duration / online metadata** — These belong to `identifier.py`, not `patterns.py`. Not in scope for this slice.
-5. **Identifier logic** — The full `identify_file()` / `Identifier` class from `identifier.py` is not yet ported. Only the underlying pattern helpers are ready.
+3. **Title cleanup coverage** — `clean_title_with_year` follows the Python helper behavior covered by the fixture CSV examples and unit tests. Add new golden cases here when rare release-group naming patterns appear.
+4. **NFO / sidecar / duration / online metadata** — These belong to `identifier.py`, not `patterns.py`. They are tracked separately in `identifier-parity-notes.md`, `nfo-parity-notes.md`, `companions-parity-notes.md`, and `metadata-parity-notes.md`.
 
 ## Recommended Next Migration Slice
 
-**Jellyfin destination planner parity**
-
-- Port destination path generation and filename sanitization from `../rosey/src/rosey/planner/`
-- Implement conflict suffixing (` - 1`, ` - 2`, etc.)
-- Add snapshot/golden tests for planned paths
-- This should be done before scanner or mover work begins, so the planner is testable before file operations are wired in.
+Parser parity is complete for the migrated filename helper surface. Continue using Python fixture CSVs when adding rare filename edge cases.

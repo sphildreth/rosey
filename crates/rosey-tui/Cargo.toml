@@ -14,6 +14,9 @@ crossterm.workspace = true
 ratatui.workspace = true
 rosey-core = { path = "../rosey-core" }
 rosey-fs = { path = "../rosey-fs" }
+rosey-metadata = { path = "../rosey-metadata" }
 serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

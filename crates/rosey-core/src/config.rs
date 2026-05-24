@@ -30,6 +30,74 @@ pub struct PathsConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WindowConfig {
+    #[serde(default = "default_window_width")]
+    pub width: u32,
+    #[serde(default = "default_window_height")]
+    pub height: u32,
+    #[serde(default)]
+    pub maximized: bool,
+}
+
+fn default_window_width() -> u32 {
+    1200
+}
+fn default_window_height() -> u32 {
+    800
+}
+
+impl Default for WindowConfig {
+    fn default() -> Self {
+        Self { width: default_window_width(), height: default_window_height(), maximized: false }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SplittersConfig {
+    #[serde(default = "default_splitters_main")]
+    pub main: Vec<u32>,
+    #[serde(default = "default_splitters_vertical")]
+    pub vertical: Vec<u32>,
+}
+
+fn default_splitters_main() -> Vec<u32> {
+    vec![300, 900]
+}
+fn default_splitters_vertical() -> Vec<u32> {
+    vec![600, 200]
+}
+
+impl Default for SplittersConfig {
+    fn default() -> Self {
+        Self { main: default_splitters_main(), vertical: default_splitters_vertical() }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UIConfig {
+    #[serde(default = "default_theme")]
+    pub theme: String,
+    #[serde(default)]
+    pub window: WindowConfig,
+    #[serde(default)]
+    pub splitters: SplittersConfig,
+}
+
+fn default_theme() -> String {
+    "system".into()
+}
+
+impl Default for UIConfig {
+    fn default() -> Self {
+        Self {
+            theme: default_theme(),
+            window: WindowConfig::default(),
+            splitters: SplittersConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BehaviorConfig {
     #[serde(default = "default_true")]
     pub dry_run: bool,
@@ -225,6 +293,8 @@ pub struct RoseyConfig {
     #[serde(default)]
     pub paths: PathsConfig,
     #[serde(default)]
+    pub ui: UIConfig,
+    #[serde(default)]
     pub behavior: BehaviorConfig,
     #[serde(default)]
     pub scanning: ScanningConfig,
@@ -245,6 +315,7 @@ impl Default for RoseyConfig {
         Self {
             version: default_version(),
             paths: PathsConfig::default(),
+            ui: UIConfig::default(),
             behavior: BehaviorConfig::default(),
             scanning: ScanningConfig::default(),
             identification: IdentificationConfig::default(),

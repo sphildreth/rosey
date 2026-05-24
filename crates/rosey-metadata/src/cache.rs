@@ -1,5 +1,5 @@
 use sqlite::{Connection, State};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Disk-backed cache for provider metadata.
@@ -13,7 +13,15 @@ pub struct ProviderCache {
 impl ProviderCache {
     /// Open or create a cache database at the given path.
     pub fn open(path: impl AsRef<Path>, ttl_days: u32) -> Result<Self, sqlite::Error> {
-        let conn = Connection::open(path)?;
+        let db_path = cache_db_path(path.as_ref());
+        if let Some(parent) = db_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|err| sqlite::Error {
+                code: None,
+                message: Some(format!("failed to create cache directory: {err}")),
+            })?;
+        }
+
+        let conn = Connection::open(db_path)?;
         conn.execute(
             "CREATE TABLE IF NOT EXISTS cache (
                 provider TEXT NOT NULL,
@@ -46,12 +54,8 @@ impl ProviderCache {
             let data_json: String = stmt.read(0).ok()?;
             let updated_at: i64 = stmt.read(1).ok()?;
 
-            let now = now_secs();
-            if now - updated_at as u64 > self.ttl_seconds {
-                // Expired — delete using bound parameters
-                let _ = self
-                    .conn
-                    .execute("DELETE FROM cache WHERE provider = ?1 AND kind = ?2 AND key = ?3");
+            if updated_at < self.expiry_cutoff() {
+                let _ = self.delete_key(provider, kind, key);
                 return None;
             }
 
@@ -87,12 +91,21 @@ impl ProviderCache {
 
     /// Remove expired entries.
     pub fn clear_expired(&self) -> Result<usize, sqlite::Error> {
-        let now = now_secs() as i64;
+        let cutoff = self.expiry_cutoff();
+
+        let mut count_stmt =
+            self.conn.prepare("SELECT COUNT(*) FROM cache WHERE updated_at < ?")?;
+        count_stmt.bind((1, cutoff))?;
+        let expired = if let Ok(State::Row) = count_stmt.next() {
+            count_stmt.read::<i64, usize>(0).unwrap_or(0) as usize
+        } else {
+            0
+        };
+
         let mut stmt = self.conn.prepare("DELETE FROM cache WHERE updated_at < ?")?;
-        stmt.bind((1, now))?;
+        stmt.bind((1, cutoff))?;
         stmt.next()?;
-        // sqlite crate doesn't expose rowcount easily; return 0 as best effort
-        Ok(0)
+        Ok(expired)
     }
 
     /// Clear all cached data.
@@ -105,7 +118,7 @@ impl ProviderCache {
     pub fn stats(&self) -> Result<CacheStats, sqlite::Error> {
         let mut total = 0;
         let mut expired = 0;
-        let now = now_secs() as i64;
+        let cutoff = self.expiry_cutoff();
 
         let mut stmt = self.conn.prepare("SELECT COUNT(*) FROM cache")?;
         if let Ok(State::Row) = stmt.next() {
@@ -113,12 +126,35 @@ impl ProviderCache {
         }
 
         let mut stmt = self.conn.prepare("SELECT COUNT(*) FROM cache WHERE updated_at < ?")?;
-        stmt.bind((1, now))?;
+        stmt.bind((1, cutoff))?;
         if let Ok(State::Row) = stmt.next() {
             expired = stmt.read::<i64, usize>(0).unwrap_or(0) as usize;
         }
 
         Ok(CacheStats { total, expired })
+    }
+
+    fn delete_key(&self, provider: &str, kind: &str, key: &str) -> Result<(), sqlite::Error> {
+        let mut stmt = self
+            .conn
+            .prepare("DELETE FROM cache WHERE provider = ?1 AND kind = ?2 AND key = ?3")?;
+        stmt.bind((1, provider))?;
+        stmt.bind((2, kind))?;
+        stmt.bind((3, key))?;
+        stmt.next()?;
+        Ok(())
+    }
+
+    fn expiry_cutoff(&self) -> i64 {
+        now_secs().saturating_sub(self.ttl_seconds) as i64
+    }
+}
+
+fn cache_db_path(path: &Path) -> PathBuf {
+    if path.extension().is_some() {
+        path.to_path_buf()
+    } else {
+        path.join("provider_cache.db")
     }
 }
 

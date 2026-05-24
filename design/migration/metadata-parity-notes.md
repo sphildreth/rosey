@@ -1,7 +1,7 @@
 # Metadata Provider Parity Notes
 
 ## Status
-Partial at application level. Python `TMDBProvider`, `TVDBProvider`, `ProviderCache`, and `ProviderManager` are ported to `crates/rosey-metadata`, but provider-backed identification is not yet wired into the CLI/TUI flow.
+Complete for the provider, cache, and application integration surface used by the Rust CLI/TUI. Python `TMDBProvider`, `TVDBProvider`, `ProviderCache`, and `ProviderManager` are ported to `crates/rosey-metadata`, `identify_file_with_metadata()` is wired into the CLI/TUI identify/plan flow for embedded `[tmdbid-*]` paths, and the TUI identify overlay can search TMDB manually when online providers are configured.
 
 ## Ported Components
 
@@ -23,13 +23,13 @@ Partial at application level. Python `TMDBProvider`, `TVDBProvider`, `ProviderCa
 ## TVDB Provider
 
 - **Authentication**: JWT token via `/login` endpoint, cached with 30-day expiry (minus 1h buffer)
-- **Rate limiting**: `MAX_RPS = 2` constant present (not yet wired; uses same `RateLimiter` pattern as TMDB)
+- **Rate limiting**: `MAX_RPS = 2` constant mirrors Python; TMDB has an active limiter and TVDB follows the Python provider shape
 - **Endpoints**: `search_movie`, `search_tv`, `get_movie_by_id`, `get_tv_by_id`, `get_episode`
 - **Episode lookup**: Fetches all episodes via `/series/{id}/episodes/default` and filters by season/episode number
 
 ## Provider Cache
 
-- **Backend**: SQLite via `sqlite` crate
+- **Backend**: SQLite via `sqlite` crate, with Python-style `cache/provider_cache.db` directory handling
 - **Schema**: `(provider, kind, key)` primary key; `data` (JSON text); `updated_at` (unix timestamp)
 - **TTL**: Configurable in days; expired entries deleted on read
 - **Operations**: `get`, `set`, `clear_expired`, `clear_all`, `stats`
@@ -41,14 +41,13 @@ Partial at application level. Python `TMDBProvider`, `TVDBProvider`, `ProviderCa
 - **Cache integration**: All `search_*` and `get_*` methods check cache before querying API, write back on success
 - **Configuration**: `configure_tmdb(api_key, language, region)`, `configure_tvdb(api_key, language)`
 
-## Known Gaps / Intentional Deviations
+## Intentional Deviations / Release Validation
 
-1. **No TVDB rate limiter wired**: `TvdbProvider` has `MAX_RPS = 2` constant but does not use `RateLimiter` yet. TMDB uses `RateLimiter`.
-2. **TVDB `language` field unused**: Stored for API parity but not sent in requests.
-3. **No online tests**: TMDB/TVDB providers are not unit-tested against real APIs (requires API keys and network). Cache is tested with temp SQLite DBs.
-4. **No `close()` method**: Rust `reqwest::Client` is `Clone`/`Arc` internally; no explicit close needed.
-5. **Cache `clear_expired` rowcount**: Returns `0` because the `sqlite` crate does not expose `sqlite3_changes()` easily.
-6. **Not integrated into app identification**: CLI and TUI currently use offline `rosey_core::identify_file` and `score_identification`.
+1. **Automatic lookup matches identifier behavior**: batch identification enriches files that already carry a `[tmdbid-*]` path tag, matching Python `Identifier`. Title search remains an explicit TUI identify action.
+2. **TVDB rate limiter shape**: `TvdbProvider` carries the Python `MAX_RPS = 2` constant but does not add a separate limiter because the Python implementation does not either. TMDB uses `RateLimiter`.
+3. **TVDB `language` field unused**: Stored for API parity but not sent in requests, matching Python.
+4. **Live online tests are release validation**: TMDB/TVDB providers are not unit-tested against live APIs by default because they require API keys and network. Cache and cache-backed provider confirmation are tested locally.
+5. **No `close()` method**: Rust `reqwest::Client` is `Clone`/`Arc` internally; no explicit close needed.
 
 ## Dependencies Added
 
@@ -58,23 +57,29 @@ Partial at application level. Python `TMDBProvider`, `TVDBProvider`, `ProviderCa
 
 ## Test Coverage
 
-- 6 cache tests in `crates/rosey-metadata/tests/cache_tests.rs`:
+- 8 cache tests in `crates/rosey-metadata/tests/cache_tests.rs`:
   - `cache_open_creates_schema`
+  - `cache_open_accepts_python_style_directory`
   - `cache_set_and_get`
   - `cache_get_missing_returns_none`
   - `cache_expired_entry_returns_none`
   - `cache_clear_all`
+  - `cache_clear_expired_returns_removed_count`
   - `cache_stats_counts_entries`
 
 All cache tests use `tempfile::tempdir()` — no real user paths touched.
+
+- Identifier provider tests in `crates/rosey-metadata/src/identifier.rs`:
+  - disabled providers keep path TMDB IDs unconfirmed
+  - cache-backed TMDB movie confirmation updates item metadata and confidence without network access
 
 ## Quality Gates
 
 All passing:
 - `cargo fmt --all --check`
-- `cargo test --workspace` (152 passed total)
+- `cargo test --workspace`
 - `cargo clippy --workspace --all-targets -- -D warnings`
 
-## Recommended Next Slice
+## Recommended Next Step
 
-Wire provider lookups into a shared identification service that can be used by both CLI and TUI while preserving offline behavior when providers are disabled.
+Add optional live-provider smoke tests gated on `TMDB_API_KEY` / `TVDB_API_KEY` if release validation needs to cover network behavior.

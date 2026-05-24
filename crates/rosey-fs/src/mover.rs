@@ -1,10 +1,14 @@
 use camino::{Utf8Path, Utf8PathBuf};
 use rosey_core::{ConflictPolicy, MediaItem, MoveResult};
 use serde::{Deserialize, Serialize};
-use std::fs;
+use std::fs::{self, File};
+use std::io::{BufReader, Read};
 use thiserror::Error;
 
 use crate::journal::{JournalOp, OperationJournal};
+
+const VERIFY_CHUNK_SIZE: usize = 1024 * 1024;
+const VERIFY_CONTENT_THRESHOLD: u64 = 1024 * 1024;
 
 #[derive(Debug, Error)]
 pub enum MoveError {
@@ -207,6 +211,31 @@ pub fn move_file_transactional_journaled(
             ));
         }
 
+        match verify_file_copy(source, &effective_dest) {
+            Ok(true) => {}
+            Ok(false) => {
+                let _ = fs::remove_file(effective_dest.as_std_path());
+                if let Some(j) = journal {
+                    j.record_error(
+                        JournalOp::Failed,
+                        source,
+                        &effective_dest,
+                        "verification failed: destination content mismatch",
+                    );
+                }
+                return Err(MoveError::Io(
+                    "verification failed: destination content mismatch".to_string(),
+                ));
+            }
+            Err(e) => {
+                let _ = fs::remove_file(effective_dest.as_std_path());
+                if let Some(j) = journal {
+                    j.record_error(JournalOp::Failed, source, &effective_dest, &e.to_string());
+                }
+                return Err(e);
+            }
+        }
+
         if let Some(j) = journal {
             j.record_op(JournalOp::CopyVerified, source, &effective_dest);
         }
@@ -232,6 +261,49 @@ pub fn move_file_transactional_journaled(
     }
 
     Ok((true, action))
+}
+
+pub fn verify_file_copy(source: &Utf8Path, dest: &Utf8Path) -> Result<bool, MoveError> {
+    let src_meta = fs::metadata(source)
+        .map_err(|e| MoveError::Io(format!("failed to stat source for verification: {e}")))?;
+    let dst_meta = fs::metadata(dest)
+        .map_err(|e| MoveError::Io(format!("failed to stat destination for verification: {e}")))?;
+
+    if src_meta.len() != dst_meta.len() {
+        return Ok(false);
+    }
+    if src_meta.len() < VERIFY_CONTENT_THRESHOLD {
+        return Ok(true);
+    }
+
+    let src_file = File::open(source.as_std_path())
+        .map_err(|e| MoveError::Io(format!("failed to open source for verification: {e}")))?;
+    let dst_file = File::open(dest.as_std_path())
+        .map_err(|e| MoveError::Io(format!("failed to open destination for verification: {e}")))?;
+
+    let mut src_reader = BufReader::with_capacity(VERIFY_CHUNK_SIZE, src_file);
+    let mut dst_reader = BufReader::with_capacity(VERIFY_CHUNK_SIZE, dst_file);
+    let mut src_buf = vec![0; VERIFY_CHUNK_SIZE];
+    let mut dst_buf = vec![0; VERIFY_CHUNK_SIZE];
+
+    loop {
+        let src_read = src_reader
+            .read(&mut src_buf)
+            .map_err(|e| MoveError::Io(format!("failed to read source for verification: {e}")))?;
+        let dst_read = dst_reader.read(&mut dst_buf).map_err(|e| {
+            MoveError::Io(format!("failed to read destination for verification: {e}"))
+        })?;
+
+        if src_read != dst_read {
+            return Ok(false);
+        }
+        if src_read == 0 {
+            return Ok(true);
+        }
+        if src_buf[..src_read] != dst_buf[..dst_read] {
+            return Ok(false);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

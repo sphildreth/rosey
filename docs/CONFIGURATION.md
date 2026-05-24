@@ -17,6 +17,18 @@ If the file is missing or invalid, Rosey uses built-in defaults.
     "movies": "/mnt/media/Movies",
     "tv": "/mnt/media/TV"
   },
+  "ui": {
+    "theme": "system",
+    "window": {
+      "width": 1200,
+      "height": 800,
+      "maximized": false
+    },
+    "splitters": {
+      "main": [300, 900],
+      "vertical": [600, 200]
+    }
+  },
   "behavior": {
     "dry_run": true,
     "auto_select_green": true,
@@ -60,8 +72,8 @@ If the file is missing or invalid, Rosey uses built-in defaults.
 
 ## Current Support
 
-The TUI reads configured source, movie target, TV target, dry-run mode, conflict policy, scan concurrency, symlink behavior, and confidence thresholds.
+The TUI reads configured source, movie target, TV target, dry-run mode, conflict policy, scan concurrency, symlink behavior, confidence thresholds, provider settings, and auto-delete patterns. On the Settings screen, use Up/Down to select a field, `e` to edit it, and `w` or `s` to save the runtime snapshot back to `rosey.json`.
 
-The CLI reads configured source and target paths, scan concurrency, symlink behavior, conflict policy, and confidence bands. CLI live moves still require `--no-dry-run`; a stored `behavior.dry_run = false` does not make `rosey-cli run` destructive by default.
+The CLI reads configured source and target paths, scan concurrency, symlink behavior, conflict policy, confidence bands, identification settings, and provider settings. `rosey-cli run --save-config` persists explicitly supplied path arguments. CLI live moves still require `--no-dry-run`; a stored `behavior.dry_run = false` does not make `rosey-cli run` destructive by default.
 
-Not all Python settings are fully wired yet. In particular, Rust does not yet expose an in-app settings editor, `--save-config`, online provider integration in the identify path, or duration-based confidence scoring.
+Rust preserves the Python `ui` section when loading and saving config, although the terminal UI does not use PySide6 window geometry or splitter settings.

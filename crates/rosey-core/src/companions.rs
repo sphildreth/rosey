@@ -48,7 +48,7 @@ pub fn discover_companion_files(media_path: &Utf8Path) -> Vec<Utf8PathBuf> {
             continue;
         };
 
-        if file_type.is_file() {
+        if path.is_file() {
             if let Some(ext) = path.extension() {
                 let ext_lower = ext.to_lowercase();
                 if subtitle_exts.contains(ext_lower.as_str())
@@ -86,7 +86,7 @@ fn recursive_subtitle_scan(dir: &Utf8Path, subtitle_exts: &HashSet<&str>) -> Vec
             continue;
         };
 
-        if file_type.is_file() {
+        if path.is_file() {
             if let Some(ext) = path.extension() {
                 if subtitle_exts.contains(ext.to_lowercase().as_str()) {
                     results.push(path);

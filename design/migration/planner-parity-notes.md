@@ -23,7 +23,7 @@ Complete. All Python planner behavior has been ported to `crates/rosey-core/src/
 - **Title casing**: capitalizes first and last words, lowercases articles/prepositions in between
 - **No root set**: returns `source_path` unchanged
 
-## Known Gaps / Intentional Deviations
+## Intentional Deviations
 
 1. **Companion kind**: Python `planner.py` checks for `kind == "companion"` and returns `"Moved with primary video"`, but `rosey.models.MediaItem.kind` only documents `"movie" | "show" | "episode" | "unknown"`. The Rust `MediaKind` enum matches the documented Python kinds. The `companion` branch in Python appears to be dead code.
 2. **Conflict suffixing**: Not implemented in Python planner either. The Python reference does not generate conflict-suffixed paths; this is handled elsewhere (if at all).

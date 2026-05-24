@@ -29,7 +29,7 @@ pub fn discover_sidecars(media_path: &Utf8Path) -> Vec<Utf8PathBuf> {
 
     entries
         .filter_map(Result::ok)
-        .filter(|entry| entry.file_type().map(|ft| ft.is_file()).unwrap_or(false))
+        .filter(|entry| entry.path().is_file())
         .filter_map(|entry| Utf8PathBuf::from_path_buf(entry.path()).ok())
         .filter(|candidate| candidate != media_path)
         .filter(|candidate| candidate.file_stem() == Some(stem))

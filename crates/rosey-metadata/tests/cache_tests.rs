@@ -15,6 +15,17 @@ fn cache_open_creates_schema() {
 }
 
 #[test]
+fn cache_open_accepts_python_style_directory() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cache_dir = tmp.path().join("cache");
+
+    let cache = ProviderCache::open(&cache_dir, 30).unwrap();
+
+    assert!(cache_dir.join("provider_cache.db").exists());
+    assert_eq!(cache.stats().unwrap().total, 0);
+}
+
+#[test]
 fn cache_set_and_get() {
     let (_tmp, path) = temp_db();
     let cache = ProviderCache::open(&path, 30).unwrap();
@@ -47,6 +58,23 @@ fn cache_expired_entry_returns_none() {
 
     // Should be expired
     assert!(cache.get("tmdb", "movie", "1").is_none());
+    assert_eq!(cache.stats().unwrap().total, 0);
+}
+
+#[test]
+fn cache_clear_expired_returns_removed_count() {
+    let (_tmp, path) = temp_db();
+    let cache = ProviderCache::open(&path, 0).unwrap();
+
+    let data = serde_json::json!({"title": "Old"});
+    cache.set("tmdb", "movie", "1", &data).unwrap();
+    cache.set("tmdb", "movie", "2", &data).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+
+    let removed = cache.clear_expired().unwrap();
+
+    assert_eq!(removed, 2);
+    assert_eq!(cache.stats().unwrap().total, 0);
 }
 
 #[test]

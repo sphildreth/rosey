@@ -1923,8 +1923,10 @@ dependencies = [
  "clap",
  "rosey-core",
  "rosey-fs",
+ "rosey-metadata",
  "serde",
  "serde_json",
+ "tokio",
  "tracing",
  "tracing-subscriber",
 ]
@@ -1987,7 +1989,10 @@ dependencies = [
  "ratatui",
  "rosey-core",
  "rosey-fs",
+ "rosey-metadata",
  "serde",
+ "serde_json",
+ "tokio",
  "tracing",
  "tracing-subscriber",
 ]

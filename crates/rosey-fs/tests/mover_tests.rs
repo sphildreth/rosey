@@ -195,6 +195,36 @@ fn move_file_source_missing() {
     assert!(result.is_err());
 }
 
+#[test]
+fn verify_file_copy_accepts_identical_files() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+
+    let source = media_path(dir, "source.mkv");
+    let dest = media_path(dir, "dest.mkv");
+    fs::write(&source, b"video content").unwrap();
+    fs::write(&dest, b"video content").unwrap();
+
+    assert!(verify_file_copy(&source, &dest).unwrap());
+}
+
+#[test]
+fn verify_file_copy_rejects_same_size_different_content() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+
+    let source = media_path(dir, "source.mkv");
+    let dest = media_path(dir, "dest.mkv");
+    let mut source_content = vec![b'a'; 1024 * 1024 + 17];
+    let mut dest_content = source_content.clone();
+    source_content[1024 * 1024 + 3] = b'b';
+    dest_content[1024 * 1024 + 3] = b'c';
+    fs::write(&source, source_content).unwrap();
+    fs::write(&dest, dest_content).unwrap();
+
+    assert!(!verify_file_copy(&source, &dest).unwrap());
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // move_with_sidecars
 // ─────────────────────────────────────────────────────────────────────────────

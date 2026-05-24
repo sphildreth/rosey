@@ -49,6 +49,8 @@ tests/
 - Year, date, episode, part, and TMDB ID extraction
 - Title cleanup (quality tags, codecs, release groups, descriptors)
 - NFO file parsing (XML) for title, year, IDs, season/episode
+- Provider-confirmed TMDB path IDs when online providers are configured
+- Duration-aware movie rejection through ffprobe for non-fast identification paths
 - Companion file discovery (subtitles, images)
 
 ### Planner
@@ -70,16 +72,20 @@ tests/
 
 ### CLI
 - `scan` — recursive video file discovery with JSON output
-- `identify` — offline identification for a single file
+- `identify` — config-aware identification for a single file
 - `run` — scan, identify, plan, and optionally move in one command
+- `--save-config` — persist explicitly supplied path arguments
 - Stable JSON output for scripting and parity testing
 
 ### TUI
 - 7 screens: Dashboard, Scan Results, Plan Preview, Transfer Queue, Logs/Recovery, Settings, Help
 - Keyboard-first navigation with discoverable shortcuts
 - Sortable/filterable plan preview with confidence bands
+- Manual identify overlay with provider search when configured
+- Editable settings screen with config persistence
 - Confirmation dialog before destructive operations
 - Responsive scan, plan, and move progress feedback
+- Journal inspection and explicit post-move cleanup commands
 
 ### Metadata (optional)
 - TMDB and TVDB providers with rate limiting
@@ -104,7 +110,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 ## Migration status
 
-Core filesystem and planner behavior is implemented, but full application parity is not complete yet. Current gaps include config persistence from the Rust UI/CLI, provider-backed identification in the app flow, duration-aware scoring, and terminal-level UI tests. See `design/MIGRATION_PLAN.md` for current status.
+Core, CLI, metadata, and the terminal application now implement the main Python Rosey workflows. Remaining cutover work is concentrated in terminal-level UI smoke/snapshot tests, optional real-provider smoke tests with user-supplied API keys, and repository release tasks. See `design/MIGRATION_PLAN.md` for current status.
 
 ## Reference
 

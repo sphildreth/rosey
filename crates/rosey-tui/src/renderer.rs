@@ -1,4 +1,6 @@
-use crate::app::{AppState, Screen, SortColumn, SortDirection, TransferState};
+use crate::app::{
+    AppState, ManualField, Screen, SettingsField, SortColumn, SortDirection, TransferState,
+};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -48,6 +50,14 @@ pub fn render(frame: &mut Frame, app: &AppState) {
     }
 
     render_status_bar(frame, app, chunks[3]);
+
+    if app.manual_edit.is_some() {
+        render_manual_identify_dialog(frame, app);
+    }
+
+    if app.settings_edit.is_some() {
+        render_settings_edit_dialog(frame, app);
+    }
 }
 
 fn render_header(frame: &mut Frame, _app: &AppState, area: Rect) {
@@ -426,6 +436,30 @@ fn render_transfer_queue(frame: &mut Frame, app: &AppState, area: Rect) {
 }
 
 fn render_logs(frame: &mut Frame, app: &AppState, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(5), Constraint::Min(1)])
+        .split(area);
+
+    let recovery = Paragraph::new(vec![
+        Line::from(vec![
+            Span::styled("Journal:  ", GRAY_STYLE),
+            Span::raw(app.last_journal_path.as_ref().map(|p| p.as_str()).unwrap_or("(none)")),
+        ]),
+        Line::from(vec![
+            Span::styled("Recovery: ", GRAY_STYLE),
+            Span::raw(app.recovery_summary.as_str()),
+        ]),
+        Line::from(vec![
+            Span::styled("r", Style::new().fg(Color::Cyan).bold()),
+            Span::raw(" inspect last move journal"),
+        ]),
+    ])
+    .block(Block::default().title(" Recovery ").borders(Borders::ALL))
+    .wrap(Wrap { trim: true });
+
+    frame.render_widget(recovery, chunks[0]);
+
     let items: Vec<ListItem> =
         app.log_messages.iter().rev().take(50).map(|msg| ListItem::new(Span::raw(msg))).collect();
 
@@ -433,70 +467,78 @@ fn render_logs(frame: &mut Frame, app: &AppState, area: Rect) {
         Block::default().title(format!(" Log ({}) ", app.log_messages.len())).borders(Borders::ALL),
     );
 
-    frame.render_widget(list, area);
+    frame.render_widget(list, chunks[1]);
 }
 
 fn render_settings(frame: &mut Frame, app: &AppState, area: Rect) {
-    let settings_lines = vec![
-        Line::from(vec![
-            Span::styled("Source:           ", GRAY_STYLE),
-            Span::raw(app.source_path.as_str()),
-        ]),
-        Line::from(vec![
-            Span::styled("Movies Target:    ", GRAY_STYLE),
-            Span::raw(app.movies_target.as_ref().map(|p| p.as_str()).unwrap_or("")),
-        ]),
-        Line::from(vec![
-            Span::styled("TV Target:        ", GRAY_STYLE),
-            Span::raw(app.tv_target.as_ref().map(|p| p.as_str()).unwrap_or("")),
-        ]),
-        Line::from(vec![
-            Span::styled("Dry-run:          ", GRAY_STYLE),
-            Span::raw(format!("{}", app.dry_run)),
-        ]),
-        Line::from(vec![
-            Span::styled("Follow Symlinks:  ", GRAY_STYLE),
-            Span::raw(format!("{}", app.follow_symlinks)),
-        ]),
-        Line::from(vec![
-            Span::styled("Conflict Policy:  ", GRAY_STYLE),
-            Span::raw(app.get_conflict_policy_name()),
-        ]),
-        Line::from(vec![
-            Span::styled("Max Workers:      ", GRAY_STYLE),
-            Span::raw(format!("{}", app.max_workers)),
-        ]),
-        Line::from(vec![
-            Span::styled("Confidence Floor: ", GRAY_STYLE),
-            Span::raw(format!("{}", app.confidence_threshold)),
-        ]),
-        Line::from(vec![
-            Span::styled("Bands:            ", GRAY_STYLE),
-            Span::raw(format!(
-                "green >= {}, yellow >= {}",
-                app.confidence_thresholds.green, app.confidence_thresholds.yellow
-            )),
-        ]),
-        Line::from(vec![
-            Span::styled("Status:           ", GRAY_STYLE),
-            Span::raw(app.operation_status.as_str()),
-        ]),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled("c ", Style::new().fg(Color::Cyan).bold()),
-            Span::raw("conflict   "),
-            Span::styled("d", Style::new().fg(Color::Cyan).bold()),
-            Span::raw(" dry-run toggle   "),
-            Span::styled("+/-", Style::new().fg(Color::Cyan).bold()),
-            Span::raw(" confidence"),
-        ]),
-    ];
+    let mut settings_lines = Vec::new();
+    settings_lines.push(Line::from(vec![
+        Span::styled("Up/Down ", Style::new().fg(Color::Cyan).bold()),
+        Span::raw("select   "),
+        Span::styled("e ", Style::new().fg(Color::Cyan).bold()),
+        Span::raw("edit   "),
+        Span::styled("w/s ", Style::new().fg(Color::Cyan).bold()),
+        Span::raw("save"),
+    ]));
+    settings_lines.push(Line::from(""));
+
+    for (index, field) in SettingsField::all().iter().enumerate() {
+        let selected = index == app.selected_settings_index;
+        let marker = if selected { ">" } else { " " };
+        let label_style = if selected { WHITE_BOLD } else { GRAY_STYLE };
+        let value = app.settings_value(*field);
+        settings_lines.push(Line::from(vec![
+            Span::styled(format!("{marker} {:<22}", field.label()), label_style),
+            Span::raw(truncate_to_width(&value, area.width.saturating_sub(26) as usize)),
+        ]));
+    }
+
+    settings_lines.push(Line::from(""));
+    settings_lines.push(Line::from(vec![
+        Span::styled("Status: ", GRAY_STYLE),
+        Span::raw(app.operation_status.as_str()),
+    ]));
 
     let settings = Paragraph::new(settings_lines)
         .block(Block::default().title(" Settings ").borders(Borders::ALL))
         .wrap(Wrap { trim: true });
 
     frame.render_widget(settings, area);
+}
+
+fn render_settings_edit_dialog(frame: &mut Frame, app: &AppState) {
+    let Some(edit) = &app.settings_edit else {
+        return;
+    };
+
+    let area = centered_rect(68, 24, frame.area());
+    let lines = vec![
+        Line::from(""),
+        Line::from(vec![Span::styled(format!("Edit {}", edit.field.label()), HEADER_STYLE)]),
+        Line::from(""),
+        Line::from(vec![Span::styled("Value: ", GRAY_STYLE), Span::raw(edit.value.as_str())]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Enter", Style::new().fg(Color::Cyan).bold()),
+            Span::raw(" apply   "),
+            Span::styled("Esc", Style::new().fg(Color::Cyan).bold()),
+            Span::raw(" cancel   "),
+            Span::styled("Backspace", Style::new().fg(Color::Cyan).bold()),
+            Span::raw(" delete"),
+        ]),
+    ];
+
+    let dialog = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .title(" Setting ")
+                .borders(Borders::ALL)
+                .border_type(BorderType::Double),
+        )
+        .wrap(Wrap { trim: true });
+
+    frame.render_widget(Clear, frame.area());
+    frame.render_widget(dialog, area);
 }
 
 fn render_help(frame: &mut Frame, _app: &AppState, area: Rect) {
@@ -533,6 +575,22 @@ fn render_help(frame: &mut Frame, _app: &AppState, area: Rect) {
             Span::raw("Search/filter in Plan Preview"),
         ]),
         Line::from(vec![
+            Span::styled("i  ", Style::new().fg(Color::Cyan).bold()),
+            Span::raw("Manually identify selected plan item"),
+        ]),
+        Line::from(vec![
+            Span::styled("F5 ", Style::new().fg(Color::Cyan).bold()),
+            Span::raw("Search online providers from identify overlay"),
+        ]),
+        Line::from(vec![
+            Span::styled("r  ", Style::new().fg(Color::Cyan).bold()),
+            Span::raw("Inspect last move journal on Logs / Recovery"),
+        ]),
+        Line::from(vec![
+            Span::styled("x  ", Style::new().fg(Color::Cyan).bold()),
+            Span::raw("Clean moved source folders on Transfer Queue"),
+        ]),
+        Line::from(vec![
             Span::styled("Esc", Style::new().fg(Color::Cyan).bold()),
             Span::raw("Clear filter"),
         ]),
@@ -543,6 +601,10 @@ fn render_help(frame: &mut Frame, _app: &AppState, area: Rect) {
         Line::from(vec![
             Span::styled("+/-", Style::new().fg(Color::Cyan).bold()),
             Span::raw("Adjust confidence threshold"),
+        ]),
+        Line::from(vec![
+            Span::styled("e  ", Style::new().fg(Color::Cyan).bold()),
+            Span::raw("Edit selected Settings field"),
         ]),
         Line::from(vec![
             Span::styled("y/n", Style::new().fg(Color::Cyan).bold()),
@@ -601,6 +663,96 @@ fn render_confirmation_dialog(frame: &mut Frame, app: &AppState) {
 
     frame.render_widget(Clear, frame.area());
     frame.render_widget(confirm, dialog_area);
+}
+
+fn render_manual_identify_dialog(frame: &mut Frame, app: &AppState) {
+    let Some(edit) = &app.manual_edit else {
+        return;
+    };
+
+    let area = centered_rect(70, 50, frame.area());
+    let kind_style = if edit.field == ManualField::Kind { WHITE_BOLD } else { GRAY_STYLE };
+    let title_style = if edit.field == ManualField::Title { WHITE_BOLD } else { GRAY_STYLE };
+    let year_style = if edit.field == ManualField::Year { WHITE_BOLD } else { GRAY_STYLE };
+    let kind = match edit.kind {
+        rosey_core::MediaKind::Movie => "Movie",
+        rosey_core::MediaKind::Episode => "Episode",
+        rosey_core::MediaKind::Show => "Show",
+        rosey_core::MediaKind::Unknown => "Unknown",
+    };
+
+    let mut lines = vec![
+        Line::from(""),
+        Line::from(vec![Span::styled("Manual Identification", HEADER_STYLE)]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Kind:  ", kind_style),
+            Span::raw(kind),
+            Span::styled("   m", Style::new().fg(Color::Cyan).bold()),
+            Span::raw(" movie "),
+            Span::styled("e", Style::new().fg(Color::Cyan).bold()),
+            Span::raw(" episode "),
+            Span::styled("u", Style::new().fg(Color::Cyan).bold()),
+            Span::raw(" unknown"),
+        ]),
+        Line::from(vec![
+            Span::styled("Title: ", title_style),
+            Span::raw(if edit.title.is_empty() { "(empty)" } else { edit.title.as_str() }),
+        ]),
+        Line::from(vec![
+            Span::styled("Year:  ", year_style),
+            Span::raw(if edit.year.is_empty() { "(none)" } else { edit.year.as_str() }),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Online: ", GRAY_STYLE),
+            Span::raw(edit.search_status.as_str()),
+        ]),
+    ];
+
+    if !edit.provider_results.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![Span::styled("Provider Results", HEADER_STYLE)]));
+        for (index, result) in edit.provider_results.iter().take(6).enumerate() {
+            let marker = if index == edit.provider_index { ">" } else { " " };
+            let style = if index == edit.provider_index { WHITE_BOLD } else { GRAY_STYLE };
+            let year = result.year.map(|year| year.to_string()).unwrap_or_else(|| "N/A".into());
+            lines.push(Line::from(vec![Span::styled(
+                format!("{marker} {} ({year}) [tmdbid-{}]", result.title, result.id),
+                style,
+            )]));
+        }
+    }
+
+    lines.extend([
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Tab", Style::new().fg(Color::Cyan).bold()),
+            Span::raw(" field   "),
+            Span::styled("F5", Style::new().fg(Color::Cyan).bold()),
+            Span::raw(" search   "),
+            Span::styled("↑/↓", Style::new().fg(Color::Cyan).bold()),
+            Span::raw(" result   "),
+        ]),
+        Line::from(vec![
+            Span::styled("Enter", Style::new().fg(Color::Cyan).bold()),
+            Span::raw(" apply   "),
+            Span::styled("Esc", Style::new().fg(Color::Cyan).bold()),
+            Span::raw(" cancel"),
+        ]),
+    ]);
+
+    let dialog = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .title(" Identify ")
+                .borders(Borders::ALL)
+                .border_type(BorderType::Double),
+        )
+        .wrap(Wrap { trim: true });
+
+    frame.render_widget(Clear, frame.area());
+    frame.render_widget(dialog, area);
 }
 
 struct Clear;
@@ -724,4 +876,86 @@ fn truncate_to_width(value: &str, max_width: usize) -> String {
     let mut truncated: String = value.chars().take(max_width - 3).collect();
     truncated.push_str("...");
     truncated
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::{IdentifiedItem, SettingsField};
+    use camino::Utf8PathBuf;
+    use ratatui::{backend::TestBackend, Terminal};
+    use rosey_core::{MediaItem, Score};
+
+    fn render_text(app: &AppState) -> String {
+        let backend = TestBackend::new(100, 32);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| render(frame, app)).unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let mut text = String::new();
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                text.push_str(buffer[(x, y)].symbol());
+            }
+            text.push('\n');
+        }
+        text
+    }
+
+    fn test_app() -> AppState {
+        AppState::new(&rosey_core::RoseyConfig::default(), Utf8PathBuf::from("/source"), None, None)
+    }
+
+    #[test]
+    fn dashboard_render_smoke() {
+        let app = test_app();
+
+        let text = render_text(&app);
+
+        assert!(text.contains("Rosey"));
+        assert!(text.contains("Dashboard"));
+    }
+
+    #[test]
+    fn settings_edit_overlay_render_smoke() {
+        let mut app = test_app();
+        app.current_screen = Screen::Settings;
+        app.selected_settings_index =
+            SettingsField::all().iter().position(|field| *field == SettingsField::Source).unwrap();
+        app.begin_settings_edit();
+
+        let text = render_text(&app);
+
+        assert!(text.contains("Edit Source"));
+        assert!(text.contains("Value:"));
+    }
+
+    #[test]
+    fn identify_overlay_render_smoke() {
+        let mut app = test_app();
+        app.current_screen = Screen::PlanPreview;
+        app.identified_items.push(IdentifiedItem {
+            media_item: MediaItem {
+                kind: MediaKind::Movie,
+                source_path: Utf8PathBuf::from("/source/Movie.mkv"),
+                title: Some("Movie".into()),
+                year: Some(2020),
+                season: None,
+                episodes: Vec::new(),
+                part: None,
+                date: None,
+                sidecars: Vec::new(),
+                nfo: Default::default(),
+            },
+            score: Score { confidence: 50, reasons: Vec::new() },
+            destination: Utf8PathBuf::from("/movies/Movie (2020)/Movie.mkv"),
+        });
+        app.rebuild_filtered();
+        app.begin_manual_edit();
+
+        let text = render_text(&app);
+
+        assert!(text.contains("Manual Identification"));
+        assert!(text.contains("F5"));
+    }
 }

@@ -1,8 +1,10 @@
 pub mod cache;
+pub mod identifier;
 pub mod manager;
 pub mod providers;
 
 pub use cache::*;
+pub use identifier::*;
 pub use manager::*;
 pub use providers::*;
 

@@ -20,17 +20,16 @@ Complete. Python `discover_sidecars` and `is_sidecar_path` behavior ported to `c
 - **Stem matching**: only files with the same `file_stem` as the media file are included
 - **Excludes media file itself**: the media file is never in the result
 - **Excludes non-matching stems**: `other.srt` or `movie.en.srt` are ignored
+- **Symlinked files included**: symlinks to sidecar files are discovered like Python `Path.is_file()`
 - **Nonexistent path**: returns empty `Vec`
 - **Ignores directories**: a directory named `movie.srt` is not returned
 
-## Known Gaps / Intentional Deviations
+## Intentional Deviations
 
 1. **Companion files in special subdirectories**: Python's `Identifier` (not `mover`) discovers companion files in `Subs/`, `sub/`, `Subtitles/`, `subtitle/` subdirectories recursively. This is **identifier** behavior, not sidecar discovery behavior. The Rust `discover_sidecars` intentionally matches the mover-level function.
-2. **No symlink handling**: Python `discover_sidecars` checks `file.is_file()` which follows symlinks. Rust also uses `entry.file_type().is_file()` which does not follow symlinks. This is a minor semantic difference; symlinks to sidecars would be skipped in Rust but followed in Python.
-
 ## Test Coverage
 
-10 tests in `crates/rosey-fs/tests/sidecars_tests.rs`:
+11 tests in `crates/rosey-fs/tests/sidecars_tests.rs`:
 
 - `is_sidecar_recognizes_all_extensions` — all 14 extensions recognized
 - `is_sidecar_case_insensitive` — uppercase and mixed case match
@@ -42,6 +41,7 @@ Complete. Python `discover_sidecars` and `is_sidecar_path` behavior ported to `c
 - `discover_ignores_directories` — directories with sidecar-like names excluded
 - `discover_case_insensitive_extensions` — `.SRT`, `.JPG` recognized
 - `discover_different_stem_ignored` — `movie.en.srt` ignored (stem mismatch)
+- `symlink_tests::discover_includes_symlinked_sidecar_file` — symlinked sidecar file included
 
 All tests use `tempfile::tempdir()` — no real user media paths touched.
 
@@ -52,6 +52,6 @@ All passing:
 - `cargo test --workspace` (96 passed total)
 - `cargo clippy --workspace --all-targets -- -D warnings`
 
-## Recommended Next Slice
+## Recommended Next Step
 
-**NFO parsing** — if there is Python NFO parsing behavior to port. Alternatively, **identifier companion discovery** (the special-subdirectory recursive scanning from `test_companion_files.py`). The move/copy engine parity should come later after the file safety ADR is reviewed.
+Sidecar parity is complete. Add new Python fixture cases here only when real-world media libraries expose additional sidecar patterns.

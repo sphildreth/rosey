@@ -28,7 +28,7 @@ Complete. All Python scanner behavior has been ported to `crates/rosey-fs/src/sc
 - **Concurrency parity**: different `max_workers` values produce identical results (no `rayon` needed; `walkdir` handles traversal efficiently)
 - **Symlinks**: `follow_symlinks` flag passed to `walkdir`
 
-## Known Gaps / Intentional Deviations
+## Intentional Deviations
 
 1. **`max_workers` not used for thread pool**: Python uses `ThreadPoolExecutor` to run `_scan_path` concurrently. In Rust, `walkdir` yields entries with metadata already populated, so the per-file work is negligible. `max_workers` is stored for API parity but does not affect behavior.
 2. **`max_depth` option**: Added in Rust as a useful enhancement not present in Python. Default `None` preserves Python's unlimited-depth behavior.
@@ -60,6 +60,6 @@ All passing:
 - `cargo test --workspace` (86 passed total)
 - `cargo clippy --workspace --all-targets -- -D warnings`
 
-## Recommended Next Slice
+## Recommended Next Step
 
-**Sidecar discovery** (`sidecars.rs` parity) or **NFO parsing** (if there is Python NFO behavior to port). The `sidecars.rs` stub already has `is_sidecar_path` and `discover_sidecars`, but lacks parity tests against Python.
+Scanner parity is complete. Add fixture cases here only when real-world library scans expose additional edge cases.

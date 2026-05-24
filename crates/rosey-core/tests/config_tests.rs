@@ -46,6 +46,12 @@ mod config_tests {
         assert_eq!(cfg.paths.source, "");
         assert_eq!(cfg.paths.movies, "");
         assert_eq!(cfg.paths.tv, "");
+        assert_eq!(cfg.ui.theme, "system");
+        assert_eq!(cfg.ui.window.width, 1200);
+        assert_eq!(cfg.ui.window.height, 800);
+        assert!(!cfg.ui.window.maximized);
+        assert_eq!(cfg.ui.splitters.main, vec![300, 900]);
+        assert_eq!(cfg.ui.splitters.vertical, vec![600, 200]);
         assert!(cfg.behavior.dry_run);
         assert!(cfg.behavior.auto_select_green);
         assert_eq!(cfg.behavior.conflict_policy, "ask");
@@ -65,20 +71,36 @@ mod config_tests {
     fn config_serialization_round_trip() {
         let cfg = RoseyConfig::default();
         let json = serde_json::to_string_pretty(&cfg).unwrap();
+        assert!(json.contains("\"ui\""));
         let parsed: RoseyConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.version, cfg.version);
         assert_eq!(parsed.paths.source, cfg.paths.source);
+        assert_eq!(parsed.ui.theme, cfg.ui.theme);
         assert_eq!(parsed.scanning.concurrency_local, cfg.scanning.concurrency_local);
         assert_eq!(parsed.behavior.dry_run, cfg.behavior.dry_run);
     }
 
     #[test]
     fn config_parses_partial_json() {
-        let json = r#"{"version": "2.0", "paths": {"source": "/media/downloads"}}"#;
+        let json = r#"{
+            "version": "2.0",
+            "paths": {"source": "/media/downloads"},
+            "ui": {
+                "theme": "dark",
+                "window": {"width": 1440, "maximized": true},
+                "splitters": {"main": [400, 800]}
+            }
+        }"#;
         let cfg: RoseyConfig = serde_json::from_str(json).unwrap();
         assert_eq!(cfg.version, "2.0");
         assert_eq!(cfg.paths.source, "/media/downloads");
         assert_eq!(cfg.paths.movies, "");
+        assert_eq!(cfg.ui.theme, "dark");
+        assert_eq!(cfg.ui.window.width, 1440);
+        assert_eq!(cfg.ui.window.height, 800);
+        assert!(cfg.ui.window.maximized);
+        assert_eq!(cfg.ui.splitters.main, vec![400, 800]);
+        assert_eq!(cfg.ui.splitters.vertical, vec![600, 200]);
     }
 
     #[test]

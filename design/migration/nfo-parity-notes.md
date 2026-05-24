@@ -28,11 +28,10 @@ Complete. Python NFO parsing behavior ported to `crates/rosey-core/src/nfo.rs`.
   - Adds `tt` prefix to bare numbers
   - Extracts ID from `imdb.com/title/tt...` URLs
 
-## Known Gaps / Intentional Deviations
+## Intentional Deviations
 
 1. **No logging**: Python emits warnings for parse errors. Rust returns `None` silently; callers can log.
 2. **XML leniency**: `quick-xml` is more lenient than Python's `xml.etree.ElementTree`. Malformed XML may return empty data rather than `None`. This is acceptable for media metadata parsing.
-3. **No `copy_file_range` / verification**: Those belong to the move/copy engine slice, not NFO parsing.
 
 ## Test Coverage
 
@@ -73,6 +72,6 @@ All passing:
 - `cargo test --workspace` (116 passed total)
 - `cargo clippy --workspace --all-targets -- -D warnings`
 
-## Recommended Next Slice
+## Recommended Next Step
 
-**Identifier companion discovery** — port the Python `Identifier._discover_companion_files` behavior that recursively scans `Subs/`, `sub/`, `Subtitles/`, `Subtitle/` subdirectories for companion subtitle/image files. This is distinct from the mover-level `discover_sidecars` we already ported. After that, the **move/copy engine** parity can proceed once the file safety ADR is in place.
+NFO parsing parity is complete. Add new golden NFO fixtures here when additional Kodi/Jellyfin metadata tags need support.

@@ -260,3 +260,27 @@ fn no_extension_ignored() {
     let companions = discover_companion_files(&media);
     assert!(companions.is_empty());
 }
+
+#[cfg(unix)]
+mod symlink_tests {
+    use super::*;
+    use std::os::unix::fs::symlink;
+
+    #[test]
+    fn recursive_subtitle_scan_includes_symlinked_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+
+        make_file(dir, "Movie (2023).mkv", "video");
+        fs::create_dir(dir.join("Subs")).unwrap();
+        make_file(dir, "Subs/actual.srt", "subs");
+        symlink(dir.join("Subs/actual.srt"), dir.join("Subs/link.srt")).unwrap();
+
+        let media = media_path(dir, "Movie (2023).mkv");
+        let companions = discover_companion_files(&media);
+
+        assert_eq!(companions.len(), 2);
+        assert!(companions.iter().any(|path| path.as_str().ends_with("Subs/actual.srt")));
+        assert!(companions.iter().any(|path| path.as_str().ends_with("Subs/link.srt")));
+    }
+}
