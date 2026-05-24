@@ -11,7 +11,7 @@ members = [
 [workspace.package]
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/sphildreth/rosey-rust"
+repository = "https://github.com/sphildreth/rosey"
 authors = ["Rosey Contributors"]
 rust-version = "1.82"
 

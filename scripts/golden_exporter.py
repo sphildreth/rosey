@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Golden output exporter for Rosey parity testing.
 
-Run from the root of the rosey-rust repo:
+Run from the root of the Rosey repo:
 
     python scripts/golden_exporter.py
 
