@@ -84,7 +84,7 @@ pub struct UIConfig {
 }
 
 fn default_theme() -> String {
-    "system".into()
+    "default".into()
 }
 
 impl Default for UIConfig {

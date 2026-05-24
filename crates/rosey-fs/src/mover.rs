@@ -1,6 +1,7 @@
 use camino::{Utf8Path, Utf8PathBuf};
 use rosey_core::{ConflictPolicy, MediaItem, MoveResult};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::fs::{self, File};
 use std::io::{BufReader, Read};
 use thiserror::Error;
@@ -367,9 +368,9 @@ pub fn check_preflight(sources: &[&Utf8Path], destination_dir: &Utf8Path) -> Pre
             let buffer = 100 * 1024 * 1024;
             if free_bytes < total_size + buffer {
                 errors.push(format!(
-                    "Insufficient space: need {} bytes, have {}",
-                    total_size + buffer,
-                    free_bytes
+                    "Insufficient space: need {}, have {}",
+                    crate::format_bytes(total_size + buffer),
+                    crate::format_bytes(free_bytes)
                 ));
             }
         }
@@ -413,7 +414,7 @@ pub fn move_with_sidecars_journaled(
     journal: Option<&OperationJournal>,
 ) -> MoveResult {
     let source = &item.source_path;
-    let sidecars = crate::discover_sidecars(source);
+    let sidecars = collect_sidecars(item);
 
     let mut all_sources: Vec<Utf8PathBuf> = Vec::with_capacity(1 + sidecars.len());
     all_sources.push(source.clone());
@@ -461,12 +462,7 @@ pub fn move_with_sidecars_journaled(
     let dest_stem = destination.file_stem().unwrap_or("");
 
     for sidecar in &sidecars {
-        let sidecar_ext = sidecar.extension().unwrap_or("");
-        let sidecar_dest = if sidecar_ext.is_empty() {
-            dest_parent.join(dest_stem)
-        } else {
-            dest_parent.join(format!("{}.{}", dest_stem, sidecar_ext))
-        };
+        let sidecar_dest = sidecar_destination(source, sidecar, dest_parent, dest_stem);
 
         match move_file_transactional_journaled(
             sidecar,
@@ -502,6 +498,51 @@ pub fn move_with_sidecars_journaled(
 
     result.success = true;
     result
+}
+
+fn collect_sidecars(item: &MediaItem) -> Vec<Utf8PathBuf> {
+    let source = &item.source_path;
+    let mut seen = BTreeSet::new();
+    let mut sidecars = Vec::new();
+    let discovered = crate::discover_sidecars(source);
+
+    for sidecar in item.sidecars.iter().chain(discovered.iter()) {
+        if sidecar == source || !sidecar.is_file() || !seen.insert(sidecar.clone()) {
+            continue;
+        }
+        sidecars.push(sidecar.clone());
+    }
+
+    sidecars
+}
+
+fn sidecar_destination(
+    source: &Utf8Path,
+    sidecar: &Utf8Path,
+    dest_parent: &Utf8Path,
+    dest_stem: &str,
+) -> Utf8PathBuf {
+    let source_parent = source.parent().unwrap_or_else(|| Utf8Path::new(""));
+    let same_directory = sidecar.parent() == Some(source_parent);
+    let same_stem = sidecar.file_stem() == source.file_stem();
+
+    if same_directory && same_stem {
+        let sidecar_ext = sidecar.extension().unwrap_or("");
+        return if sidecar_ext.is_empty() {
+            dest_parent.join(dest_stem)
+        } else {
+            dest_parent.join(format!("{dest_stem}.{sidecar_ext}"))
+        };
+    }
+
+    if let Ok(relative) = sidecar.strip_prefix(source_parent) {
+        return dest_parent.join(relative);
+    }
+
+    sidecar
+        .file_name()
+        .map(|name| dest_parent.join(name))
+        .unwrap_or_else(|| dest_parent.join("sidecar"))
 }
 
 fn record_action(result: &mut MoveResult, action: MoveAction, path: &Utf8Path) {

@@ -46,7 +46,7 @@ mod config_tests {
         assert_eq!(cfg.paths.source, "");
         assert_eq!(cfg.paths.movies, "");
         assert_eq!(cfg.paths.tv, "");
-        assert_eq!(cfg.ui.theme, "system");
+        assert_eq!(cfg.ui.theme, "default");
         assert_eq!(cfg.ui.window.width, 1200);
         assert_eq!(cfg.ui.window.height, 800);
         assert!(!cfg.ui.window.maximized);

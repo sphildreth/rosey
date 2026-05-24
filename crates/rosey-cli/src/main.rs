@@ -6,7 +6,7 @@ use rosey_core::{
     ConfidenceBand, ConfidenceThresholds, ConflictPolicy, DoctorReport, DoctorStatus,
     IdentifyOptions, MediaItem, MediaKind, RoseyConfig, Score,
 };
-use rosey_fs::{move_with_sidecars, Scanner};
+use rosey_fs::{format_bytes, move_with_sidecars, Scanner};
 use rosey_metadata::identify_file_with_metadata;
 use serde::Serialize;
 
@@ -130,7 +130,7 @@ async fn main() -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&results)?);
             } else {
                 for result in &results {
-                    println!("{} ({})", result.path, result.size_bytes);
+                    println!("{} ({})", result.path, format_bytes(result.size_bytes));
                 }
             }
         }

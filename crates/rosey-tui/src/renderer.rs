@@ -3,7 +3,7 @@ use crate::app::{
 };
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::Style,
     text::{Line, Span, Text},
     widgets::{
         Block, BorderType, Borders, Cell, Gauge, List, ListItem, Paragraph, Row, Table, Wrap,
@@ -11,14 +11,6 @@ use ratatui::{
     Frame,
 };
 use rosey_core::{ConfidenceBand, DoctorStatus, MediaKind};
-
-const HEADER_STYLE: Style = Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD);
-const GREEN_STYLE: Style = Style::new().fg(Color::Green);
-const YELLOW_STYLE: Style = Style::new().fg(Color::Yellow);
-const RED_STYLE: Style = Style::new().fg(Color::Red);
-const GRAY_STYLE: Style = Style::new().fg(Color::Gray);
-const WHITE_BOLD: Style = Style::new().fg(Color::White).add_modifier(Modifier::BOLD);
-const HIGHLIGHT_STYLE: Style = Style::new().bg(Color::DarkGray).add_modifier(Modifier::BOLD);
 
 pub fn render(frame: &mut Frame, app: &AppState) {
     if app.show_confirmation {
@@ -61,12 +53,12 @@ pub fn render(frame: &mut Frame, app: &AppState) {
     }
 }
 
-fn render_header(frame: &mut Frame, _app: &AppState, area: Rect) {
+fn render_header(frame: &mut Frame, app: &AppState, area: Rect) {
     let title = Paragraph::new(Text::from(vec![
-        Line::from(vec![Span::styled("Rosey", Style::new().fg(Color::Magenta).bold())]),
+        Line::from(vec![Span::styled("Rosey", app.theme.title)]),
         Line::from(vec![Span::raw("Media File Organizer")]),
     ]))
-    .block(Block::default().borders(Borders::ALL).border_style(Style::new().fg(Color::Magenta)))
+    .block(Block::default().borders(Borders::ALL).border_style(app.theme.title_border))
     .centered();
 
     frame.render_widget(title, area);
@@ -78,9 +70,9 @@ fn render_tabs(frame: &mut Frame, app: &AppState, area: Rect) {
         .map(|s| {
             let label = format!(" {}:{} ", s.shortcut(), s.title());
             if *s == app.current_screen {
-                Span::styled(label, Style::new().fg(Color::Black).bg(Color::Cyan).bold())
+                Span::styled(label, app.theme.tab_active)
             } else {
-                Span::styled(label, GRAY_STYLE)
+                Span::styled(label, app.theme.tab_inactive)
             }
         })
         .collect();
@@ -91,6 +83,7 @@ fn render_tabs(frame: &mut Frame, app: &AppState, area: Rect) {
 }
 
 fn render_dashboard(frame: &mut Frame, app: &AppState, area: Rect) {
+    let theme = &app.theme;
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(8), Constraint::Length(3), Constraint::Min(1)])
@@ -98,45 +91,45 @@ fn render_dashboard(frame: &mut Frame, app: &AppState, area: Rect) {
 
     let info_lines = vec![
         Line::from(vec![
-            Span::styled("Source:         ", GRAY_STYLE),
-            Span::styled(format!("{}", app.source_path), WHITE_BOLD),
+            Span::styled("Source:         ", theme.dim),
+            Span::styled(format!("{}", app.source_path), theme.strong),
         ]),
         Line::from(vec![
-            Span::styled("Movies Target:  ", GRAY_STYLE),
+            Span::styled("Movies Target:  ", theme.dim),
             Span::styled(
                 app.movies_target.as_ref().map(|p| p.as_str()).unwrap_or("(not set)"),
-                WHITE_BOLD,
+                theme.strong,
             ),
         ]),
         Line::from(vec![
-            Span::styled("TV Target:      ", GRAY_STYLE),
+            Span::styled("TV Target:      ", theme.dim),
             Span::styled(
                 app.tv_target.as_ref().map(|p| p.as_str()).unwrap_or("(not set)"),
-                WHITE_BOLD,
+                theme.strong,
             ),
         ]),
         Line::from(vec![
-            Span::styled("Mode:           ", GRAY_STYLE),
+            Span::styled("Mode:           ", theme.dim),
             Span::styled(
                 if app.dry_run { "DRY-RUN" } else { "LIVE" },
-                if app.dry_run { YELLOW_STYLE } else { RED_STYLE },
+                if app.dry_run { theme.warn } else { theme.error },
             ),
         ]),
         Line::from(vec![
-            Span::styled("Conflict:       ", GRAY_STYLE),
-            Span::styled(app.get_conflict_policy_name(), WHITE_BOLD),
+            Span::styled("Conflict:       ", theme.dim),
+            Span::styled(app.get_conflict_policy_name(), theme.strong),
         ]),
         Line::from(""),
         Line::from(vec![
-            Span::styled("s", Style::new().fg(Color::Cyan).bold()),
+            Span::styled("s", theme.key),
             Span::raw(" scan    "),
-            Span::styled("p", Style::new().fg(Color::Cyan).bold()),
+            Span::styled("p", theme.key),
             Span::raw(" plan    "),
-            Span::styled("m", Style::new().fg(Color::Cyan).bold()),
+            Span::styled("m", theme.key),
             Span::raw(" move    "),
-            Span::styled("?", Style::new().fg(Color::Cyan).bold()),
+            Span::styled("?", theme.key),
             Span::raw(" help    "),
-            Span::styled("q", Style::new().fg(Color::Cyan).bold()),
+            Span::styled("q", theme.key),
             Span::raw(" quit"),
         ]),
     ];
@@ -151,24 +144,24 @@ fn render_dashboard(frame: &mut Frame, app: &AppState, area: Rect) {
     let low = app.confidence_thresholds.green.min(app.confidence_thresholds.yellow);
     let stats_lines = vec![
         Line::from(vec![
-            Span::styled("Scanned:  ", GRAY_STYLE),
+            Span::styled("Scanned:  ", theme.dim),
             Span::raw(format!(
                 "{} video files",
                 app.scan_results.iter().filter(|r| r.is_video).count()
             )),
         ]),
         Line::from(vec![
-            Span::styled("Planned:  ", GRAY_STYLE),
+            Span::styled("Planned:  ", theme.dim),
             Span::raw(format!("{} items", app.identified_items.len())),
         ]),
         Line::from(""),
         Line::from(vec![
-            Span::styled("Green:    ", GREEN_STYLE),
+            Span::styled("Green:    ", theme.ok),
             Span::raw(format!(
                 "{} ",
                 app.identified_items.iter().filter(|i| i.score.confidence >= high).count()
             )),
-            Span::styled("Yellow:   ", YELLOW_STYLE),
+            Span::styled("Yellow:   ", theme.warn),
             Span::raw(format!(
                 "{} ",
                 app.identified_items
@@ -176,14 +169,14 @@ fn render_dashboard(frame: &mut Frame, app: &AppState, area: Rect) {
                     .filter(|i| (low..high).contains(&i.score.confidence))
                     .count()
             )),
-            Span::styled("Red:      ", RED_STYLE),
+            Span::styled("Red:      ", theme.error),
             Span::raw(format!(
                 "{}",
                 app.identified_items.iter().filter(|i| i.score.confidence < low).count()
             )),
         ]),
         Line::from(vec![
-            Span::styled("Transferred: ", GRAY_STYLE),
+            Span::styled("Transferred: ", theme.dim),
             Span::raw(format!("{}/{}", app.transfer_progress.0, app.transfer_queue.len())),
         ]),
     ];
@@ -209,11 +202,11 @@ fn render_activity(frame: &mut Frame, app: &AppState, area: Rect) {
         area.width.saturating_sub(4) as usize,
     );
     let style = if app.operation_status.to_lowercase().contains("failed") {
-        RED_STYLE
+        app.theme.error
     } else if app.is_busy() {
-        Style::new().fg(Color::Cyan)
+        app.theme.gauge
     } else {
-        GREEN_STYLE
+        app.theme.ok
     };
 
     let gauge = Gauge::default()
@@ -229,8 +222,8 @@ fn render_scan_results(frame: &mut Frame, app: &AppState, area: Rect) {
     if app.scan_error.is_some() {
         let error =
             Paragraph::new(format!("Scan error: {}", app.scan_error.as_deref().unwrap_or("")))
-                .style(RED_STYLE)
-                .block(Block::default().borders(Borders::ALL).border_style(Style::new().red()));
+                .style(app.theme.error)
+                .block(Block::default().borders(Borders::ALL).border_style(app.theme.border_error));
 
         frame.render_widget(error, area);
         return;
@@ -254,7 +247,7 @@ fn render_scan_results(frame: &mut Frame, app: &AppState, area: Rect) {
             Row::new(vec![
                 Cell::from(r.path.as_str()),
                 Cell::from(if r.is_video { "video" } else { "other" }),
-                Cell::from(format!("{}", r.size_bytes)),
+                Cell::from(rosey_fs::format_bytes(r.size_bytes)),
                 Cell::from(r.error.as_deref().unwrap_or("")),
             ])
         })
@@ -268,7 +261,7 @@ fn render_scan_results(frame: &mut Frame, app: &AppState, area: Rect) {
     ];
 
     let table = Table::new(rows, widths)
-        .header(Row::new(vec!["Path", "Type", "Size", "Error"]).style(HEADER_STYLE))
+        .header(Row::new(vec!["Path", "Type", "Size", "Error"]).style(app.theme.header))
         .block(Block::default().title(" Scan Results ").borders(Borders::ALL));
 
     frame.render_widget(table, table_area);
@@ -321,12 +314,13 @@ fn render_plan_preview(frame: &mut Frame, app: &AppState, area: Rect) {
         .map(|(idx, &item_idx)| {
             let item = &app.identified_items[item_idx];
             let style = match configured_confidence_band(app, item.score.confidence) {
-                ConfidenceBand::Green => GREEN_STYLE,
-                ConfidenceBand::Yellow => YELLOW_STYLE,
-                ConfidenceBand::Red => RED_STYLE,
+                ConfidenceBand::Green => app.theme.ok,
+                ConfidenceBand::Yellow => app.theme.warn,
+                ConfidenceBand::Red => app.theme.error,
             };
 
-            let row_style = if idx == app.selected_index { HIGHLIGHT_STYLE } else { Style::new() };
+            let row_style =
+                if idx == app.selected_index { app.theme.selected } else { Style::new() };
 
             let kind_str = match item.media_item.kind {
                 MediaKind::Movie => "Movie",
@@ -357,7 +351,9 @@ fn render_plan_preview(frame: &mut Frame, app: &AppState, area: Rect) {
     ];
 
     let table = Table::new(rows, widths)
-        .header(Row::new(vec!["Conf", "Kind", "Title", "Year", "Destination"]).style(HEADER_STYLE))
+        .header(
+            Row::new(vec!["Conf", "Kind", "Title", "Year", "Destination"]).style(app.theme.header),
+        )
         .block(
             Block::default()
                 .title(format!(" Plan Preview ({}) - {} ", app.filtered_items.len(), sort_hint))
@@ -390,7 +386,7 @@ fn render_transfer_queue(frame: &mut Frame, app: &AppState, area: Rect) {
         .split(area);
 
     let gauge = Gauge::default()
-        .gauge_style(Style::new().fg(Color::Cyan))
+        .gauge_style(app.theme.gauge)
         .label(format!("Progress: {}/{}", app.transfer_progress.0, app.transfer_progress.1))
         .ratio(progress);
 
@@ -401,12 +397,12 @@ fn render_transfer_queue(frame: &mut Frame, app: &AppState, area: Rect) {
         .iter()
         .map(|t| {
             let (state_str, state_style) = match t.state {
-                TransferState::Pending => ("PENDING", GRAY_STYLE),
-                TransferState::InProgress => ("MOVING...", YELLOW_STYLE),
-                TransferState::WouldMove => ("WOULD MOVE", GREEN_STYLE),
-                TransferState::Completed => ("DONE", GREEN_STYLE),
-                TransferState::Failed => ("FAILED", RED_STYLE),
-                TransferState::Skipped => ("SKIPPED", YELLOW_STYLE),
+                TransferState::Pending => ("PENDING", app.theme.dim),
+                TransferState::InProgress => ("MOVING...", app.theme.warn),
+                TransferState::WouldMove => ("WOULD MOVE", app.theme.ok),
+                TransferState::Completed => ("DONE", app.theme.ok),
+                TransferState::Failed => ("FAILED", app.theme.error),
+                TransferState::Skipped => ("SKIPPED", app.theme.warn),
             };
 
             Row::new(vec![
@@ -426,7 +422,7 @@ fn render_transfer_queue(frame: &mut Frame, app: &AppState, area: Rect) {
     ];
 
     let table = Table::new(rows, widths)
-        .header(Row::new(vec!["Status", "Title", "Destination", "Error"]).style(HEADER_STYLE))
+        .header(Row::new(vec!["Status", "Title", "Destination", "Error"]).style(app.theme.header))
         .block(
             Block::default()
                 .title(format!(" Transfer Queue ({}) ", app.transfer_queue.len()))
@@ -437,6 +433,7 @@ fn render_transfer_queue(frame: &mut Frame, app: &AppState, area: Rect) {
 }
 
 fn render_logs(frame: &mut Frame, app: &AppState, area: Rect) {
+    let theme = &app.theme;
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(5), Constraint::Min(1)])
@@ -444,17 +441,14 @@ fn render_logs(frame: &mut Frame, app: &AppState, area: Rect) {
 
     let recovery = Paragraph::new(vec![
         Line::from(vec![
-            Span::styled("Journal:  ", GRAY_STYLE),
+            Span::styled("Journal:  ", theme.dim),
             Span::raw(app.last_journal_path.as_ref().map(|p| p.as_str()).unwrap_or("(none)")),
         ]),
         Line::from(vec![
-            Span::styled("Recovery: ", GRAY_STYLE),
+            Span::styled("Recovery: ", theme.dim),
             Span::raw(app.recovery_summary.as_str()),
         ]),
-        Line::from(vec![
-            Span::styled("r", Style::new().fg(Color::Cyan).bold()),
-            Span::raw(" inspect last move journal"),
-        ]),
+        Line::from(vec![Span::styled("r", theme.key), Span::raw(" inspect last move journal")]),
     ])
     .block(Block::default().title(" Recovery ").borders(Borders::ALL))
     .wrap(Wrap { trim: true });
@@ -474,11 +468,11 @@ fn render_logs(frame: &mut Frame, app: &AppState, area: Rect) {
 fn render_settings(frame: &mut Frame, app: &AppState, area: Rect) {
     let mut settings_lines = Vec::new();
     settings_lines.push(Line::from(vec![
-        Span::styled("Up/Down ", Style::new().fg(Color::Cyan).bold()),
+        Span::styled("Up/Down ", app.theme.key),
         Span::raw("select   "),
-        Span::styled("e ", Style::new().fg(Color::Cyan).bold()),
+        Span::styled("e ", app.theme.key),
         Span::raw("edit   "),
-        Span::styled("w/s ", Style::new().fg(Color::Cyan).bold()),
+        Span::styled("w/s ", app.theme.key),
         Span::raw("save"),
     ]));
     settings_lines.push(Line::from(""));
@@ -486,7 +480,7 @@ fn render_settings(frame: &mut Frame, app: &AppState, area: Rect) {
     for (index, field) in SettingsField::all().iter().enumerate() {
         let selected = index == app.selected_settings_index;
         let marker = if selected { ">" } else { " " };
-        let label_style = if selected { WHITE_BOLD } else { GRAY_STYLE };
+        let label_style = if selected { app.theme.strong } else { app.theme.dim };
         let value = app.settings_value(*field);
         settings_lines.push(Line::from(vec![
             Span::styled(format!("{marker} {:<22}", field.label()), label_style),
@@ -496,7 +490,7 @@ fn render_settings(frame: &mut Frame, app: &AppState, area: Rect) {
 
     settings_lines.push(Line::from(""));
     settings_lines.push(Line::from(vec![
-        Span::styled("Status: ", GRAY_STYLE),
+        Span::styled("Status: ", app.theme.dim),
         Span::raw(app.operation_status.as_str()),
     ]));
 
@@ -515,16 +509,16 @@ fn render_settings_edit_dialog(frame: &mut Frame, app: &AppState) {
     let area = centered_rect(68, 24, frame.area());
     let lines = vec![
         Line::from(""),
-        Line::from(vec![Span::styled(format!("Edit {}", edit.field.label()), HEADER_STYLE)]),
+        Line::from(vec![Span::styled(format!("Edit {}", edit.field.label()), app.theme.header)]),
         Line::from(""),
-        Line::from(vec![Span::styled("Value: ", GRAY_STYLE), Span::raw(edit.value.as_str())]),
+        Line::from(vec![Span::styled("Value: ", app.theme.dim), Span::raw(edit.value.as_str())]),
         Line::from(""),
         Line::from(vec![
-            Span::styled("Enter", Style::new().fg(Color::Cyan).bold()),
+            Span::styled("Enter", app.theme.key),
             Span::raw(" apply   "),
-            Span::styled("Esc", Style::new().fg(Color::Cyan).bold()),
+            Span::styled("Esc", app.theme.key),
             Span::raw(" cancel   "),
-            Span::styled("Backspace", Style::new().fg(Color::Cyan).bold()),
+            Span::styled("Backspace", app.theme.key),
             Span::raw(" delete"),
         ]),
     ];
@@ -544,43 +538,47 @@ fn render_settings_edit_dialog(frame: &mut Frame, app: &AppState) {
 
 fn render_doctor(frame: &mut Frame, app: &AppState, area: Rect) {
     let report = &app.doctor_report;
+    let theme = &app.theme;
     let mut lines = vec![
         Line::from(vec![
-            Span::styled("Overall: ", GRAY_STYLE),
-            Span::styled(doctor_status_label(report.overall), doctor_status_style(report.overall)),
+            Span::styled("Overall: ", theme.dim),
+            Span::styled(
+                doctor_status_label(report.overall),
+                doctor_status_style(report.overall, app),
+            ),
             Span::raw(format!("  {} errors, {} warnings", report.errors(), report.warnings())),
         ]),
-        Line::from(vec![Span::styled("Config:  ", GRAY_STYLE), Span::raw(&report.config_path)]),
+        Line::from(vec![Span::styled("Config:  ", theme.dim), Span::raw(&report.config_path)]),
         Line::from(vec![
-            Span::styled("Keys:    ", GRAY_STYLE),
+            Span::styled("Keys:    ", theme.dim),
             Span::raw("o refresh, Up/Down scroll, PgUp/PgDn page"),
         ]),
         Line::from(""),
-        Line::from(vec![Span::styled("Attention", HEADER_STYLE)]),
+        Line::from(vec![Span::styled("Attention", theme.header)]),
     ];
 
     let issues: Vec<_> =
         report.checks.iter().filter(|check| check.status != DoctorStatus::Ok).collect();
     if issues.is_empty() {
         lines.push(Line::from(vec![
-            Span::styled("[OK] ", GREEN_STYLE),
+            Span::styled("[OK] ", theme.ok),
             Span::raw("No warnings or errors."),
         ]));
     } else {
         for check in &issues {
-            lines.push(doctor_check_line(check));
+            lines.push(doctor_check_line(check, app));
             if let Some(detail) = &check.detail {
-                lines.push(Line::from(vec![Span::raw("      "), Span::styled(detail, GRAY_STYLE)]));
+                lines.push(Line::from(vec![Span::raw("      "), Span::styled(detail, theme.dim)]));
             }
         }
     }
 
     lines.push(Line::from(""));
-    lines.push(Line::from(vec![Span::styled("All Checks", HEADER_STYLE)]));
+    lines.push(Line::from(vec![Span::styled("All Checks", theme.header)]));
     for check in &report.checks {
-        lines.push(doctor_check_line(check));
+        lines.push(doctor_check_line(check, app));
         if let Some(detail) = &check.detail {
-            lines.push(Line::from(vec![Span::raw("      "), Span::styled(detail, GRAY_STYLE)]));
+            lines.push(Line::from(vec![Span::raw("      "), Span::styled(detail, theme.dim)]));
         }
     }
 
@@ -592,13 +590,13 @@ fn render_doctor(frame: &mut Frame, app: &AppState, area: Rect) {
     frame.render_widget(doctor, area);
 }
 
-fn doctor_check_line(check: &rosey_core::DoctorCheck) -> Line<'_> {
+fn doctor_check_line<'a>(check: &'a rosey_core::DoctorCheck, app: &AppState) -> Line<'a> {
     Line::from(vec![
         Span::styled(
             format!("[{}] ", doctor_status_label(check.status)),
-            doctor_status_style(check.status),
+            doctor_status_style(check.status, app),
         ),
-        Span::styled(format!("{}: ", check.name), WHITE_BOLD),
+        Span::styled(format!("{}: ", check.name), app.theme.strong),
         Span::raw(&check.message),
     ])
 }
@@ -611,95 +609,71 @@ fn doctor_status_label(status: DoctorStatus) -> &'static str {
     }
 }
 
-fn doctor_status_style(status: DoctorStatus) -> Style {
+fn doctor_status_style(status: DoctorStatus, app: &AppState) -> Style {
     match status {
-        DoctorStatus::Ok => GREEN_STYLE,
-        DoctorStatus::Warn => YELLOW_STYLE,
-        DoctorStatus::Error => RED_STYLE,
+        DoctorStatus::Ok => app.theme.ok,
+        DoctorStatus::Warn => app.theme.warn,
+        DoctorStatus::Error => app.theme.error,
     }
 }
 
-fn render_help(frame: &mut Frame, _app: &AppState, area: Rect) {
+fn render_help(frame: &mut Frame, app: &AppState, area: Rect) {
     let help_lines = vec![
         Line::from(""),
-        Line::from(vec![Span::styled("Keyboard Shortcuts", Style::new().fg(Color::Cyan).bold())]),
+        Line::from(vec![Span::styled("Keyboard Shortcuts", app.theme.header)]),
         Line::from(""),
+        Line::from(vec![Span::styled("1-8 ", app.theme.key), Span::raw("Switch screens")]),
+        Line::from(vec![Span::styled("s  ", app.theme.key), Span::raw("Scan source directory")]),
         Line::from(vec![
-            Span::styled("1-8 ", Style::new().fg(Color::Cyan).bold()),
-            Span::raw("Switch screens"),
-        ]),
-        Line::from(vec![
-            Span::styled("s  ", Style::new().fg(Color::Cyan).bold()),
-            Span::raw("Scan source directory"),
-        ]),
-        Line::from(vec![
-            Span::styled("p  ", Style::new().fg(Color::Cyan).bold()),
+            Span::styled("p  ", app.theme.key),
             Span::raw("Plan (identify + score all scanned files)"),
         ]),
         Line::from(vec![
-            Span::styled("m  ", Style::new().fg(Color::Cyan).bold()),
+            Span::styled("m  ", app.theme.key),
             Span::raw("Execute move (requires confirmation in live mode)"),
         ]),
+        Line::from(vec![Span::styled("d  ", app.theme.key), Span::raw("Toggle dry-run mode")]),
         Line::from(vec![
-            Span::styled("d  ", Style::new().fg(Color::Cyan).bold()),
-            Span::raw("Toggle dry-run mode"),
-        ]),
-        Line::from(vec![
-            Span::styled("c  ", Style::new().fg(Color::Cyan).bold()),
+            Span::styled("c  ", app.theme.key),
             Span::raw("Cycle conflict policy (Skip → Replace → Keep Both)"),
         ]),
         Line::from(vec![
-            Span::styled("/  ", Style::new().fg(Color::Cyan).bold()),
+            Span::styled("/  ", app.theme.key),
             Span::raw("Search/filter in Plan Preview"),
         ]),
         Line::from(vec![
-            Span::styled("i  ", Style::new().fg(Color::Cyan).bold()),
+            Span::styled("i  ", app.theme.key),
             Span::raw("Manually identify selected plan item"),
         ]),
         Line::from(vec![
-            Span::styled("F5 ", Style::new().fg(Color::Cyan).bold()),
+            Span::styled("F5 ", app.theme.key),
             Span::raw("Search online providers from identify overlay"),
         ]),
         Line::from(vec![
-            Span::styled("r  ", Style::new().fg(Color::Cyan).bold()),
+            Span::styled("r  ", app.theme.key),
             Span::raw("Inspect last move journal on Logs / Recovery"),
         ]),
         Line::from(vec![
-            Span::styled("x  ", Style::new().fg(Color::Cyan).bold()),
+            Span::styled("x  ", app.theme.key),
             Span::raw("Clean moved source folders on Transfer Queue"),
         ]),
+        Line::from(vec![Span::styled("o  ", app.theme.key), Span::raw("Refresh Doctor checks")]),
+        Line::from(vec![Span::styled("Esc", app.theme.key), Span::raw("Clear filter")]),
+        Line::from(vec![Span::styled("↑↓ ", app.theme.key), Span::raw("Navigate items")]),
         Line::from(vec![
-            Span::styled("o  ", Style::new().fg(Color::Cyan).bold()),
-            Span::raw("Refresh Doctor checks"),
-        ]),
-        Line::from(vec![
-            Span::styled("Esc", Style::new().fg(Color::Cyan).bold()),
-            Span::raw("Clear filter"),
-        ]),
-        Line::from(vec![
-            Span::styled("↑↓ ", Style::new().fg(Color::Cyan).bold()),
-            Span::raw("Navigate items"),
-        ]),
-        Line::from(vec![
-            Span::styled("+/-", Style::new().fg(Color::Cyan).bold()),
+            Span::styled("+/-", app.theme.key),
             Span::raw("Adjust confidence threshold"),
         ]),
         Line::from(vec![
-            Span::styled("e  ", Style::new().fg(Color::Cyan).bold()),
+            Span::styled("e  ", app.theme.key),
             Span::raw("Edit selected Settings field"),
         ]),
         Line::from(vec![
-            Span::styled("y/n", Style::new().fg(Color::Cyan).bold()),
+            Span::styled("y/n", app.theme.key),
             Span::raw("Confirm/cancel in confirmation dialog"),
         ]),
-        Line::from(vec![
-            Span::styled("q  ", Style::new().fg(Color::Cyan).bold()),
-            Span::raw("Quit"),
-        ]),
-        Line::from(vec![
-            Span::styled("?  ", Style::new().fg(Color::Cyan).bold()),
-            Span::raw("Toggle help"),
-        ]),
+        Line::from(vec![Span::styled("q  ", app.theme.key), Span::raw("Quit")]),
+        Line::from(vec![Span::styled("?  ", app.theme.key), Span::raw("Toggle help")]),
     ];
 
     let help =
@@ -718,14 +692,11 @@ fn render_confirmation_dialog(frame: &mut Frame, app: &AppState) {
         "LIVE MODE: Files WILL be moved/destroyed."
     };
 
-    let mode_style = if app.dry_run { YELLOW_STYLE } else { RED_STYLE };
+    let mode_style = if app.dry_run { app.theme.warn } else { app.theme.error };
 
     let lines = vec![
         Line::from(""),
-        Line::from(vec![Span::styled(
-            "⚠  Confirm Move Operation  ⚠",
-            Style::new().fg(Color::Yellow).bold(),
-        )]),
+        Line::from(vec![Span::styled("⚠  Confirm Move Operation  ⚠", app.theme.danger_bold)]),
         Line::from(""),
         Line::from(vec![Span::styled(mode_msg, mode_style)]),
         Line::from(""),
@@ -733,10 +704,7 @@ fn render_confirmation_dialog(frame: &mut Frame, app: &AppState) {
         Line::from(vec![Span::raw(format!("Items to move: {}", app.identified_items.len()))]),
         Line::from(vec![Span::raw(format!("Conflict policy: {}", app.get_conflict_policy_name()))]),
         Line::from(""),
-        Line::from(vec![Span::styled(
-            "Press [y] to confirm or [n] to cancel",
-            Style::new().fg(Color::Cyan).bold(),
-        )]),
+        Line::from(vec![Span::styled("Press [y] to confirm or [n] to cancel", app.theme.key)]),
     ];
 
     let confirm = Paragraph::new(lines)
@@ -753,9 +721,10 @@ fn render_manual_identify_dialog(frame: &mut Frame, app: &AppState) {
     };
 
     let area = centered_rect(70, 50, frame.area());
-    let kind_style = if edit.field == ManualField::Kind { WHITE_BOLD } else { GRAY_STYLE };
-    let title_style = if edit.field == ManualField::Title { WHITE_BOLD } else { GRAY_STYLE };
-    let year_style = if edit.field == ManualField::Year { WHITE_BOLD } else { GRAY_STYLE };
+    let kind_style = if edit.field == ManualField::Kind { app.theme.strong } else { app.theme.dim };
+    let title_style =
+        if edit.field == ManualField::Title { app.theme.strong } else { app.theme.dim };
+    let year_style = if edit.field == ManualField::Year { app.theme.strong } else { app.theme.dim };
     let kind = match edit.kind {
         rosey_core::MediaKind::Movie => "Movie",
         rosey_core::MediaKind::Episode => "Episode",
@@ -765,16 +734,16 @@ fn render_manual_identify_dialog(frame: &mut Frame, app: &AppState) {
 
     let mut lines = vec![
         Line::from(""),
-        Line::from(vec![Span::styled("Manual Identification", HEADER_STYLE)]),
+        Line::from(vec![Span::styled("Manual Identification", app.theme.header)]),
         Line::from(""),
         Line::from(vec![
             Span::styled("Kind:  ", kind_style),
             Span::raw(kind),
-            Span::styled("   m", Style::new().fg(Color::Cyan).bold()),
+            Span::styled("   m", app.theme.key),
             Span::raw(" movie "),
-            Span::styled("e", Style::new().fg(Color::Cyan).bold()),
+            Span::styled("e", app.theme.key),
             Span::raw(" episode "),
-            Span::styled("u", Style::new().fg(Color::Cyan).bold()),
+            Span::styled("u", app.theme.key),
             Span::raw(" unknown"),
         ]),
         Line::from(vec![
@@ -787,17 +756,17 @@ fn render_manual_identify_dialog(frame: &mut Frame, app: &AppState) {
         ]),
         Line::from(""),
         Line::from(vec![
-            Span::styled("Online: ", GRAY_STYLE),
+            Span::styled("Online: ", app.theme.dim),
             Span::raw(edit.search_status.as_str()),
         ]),
     ];
 
     if !edit.provider_results.is_empty() {
         lines.push(Line::from(""));
-        lines.push(Line::from(vec![Span::styled("Provider Results", HEADER_STYLE)]));
+        lines.push(Line::from(vec![Span::styled("Provider Results", app.theme.header)]));
         for (index, result) in edit.provider_results.iter().take(6).enumerate() {
             let marker = if index == edit.provider_index { ">" } else { " " };
-            let style = if index == edit.provider_index { WHITE_BOLD } else { GRAY_STYLE };
+            let style = if index == edit.provider_index { app.theme.strong } else { app.theme.dim };
             let year = result.year.map(|year| year.to_string()).unwrap_or_else(|| "N/A".into());
             lines.push(Line::from(vec![Span::styled(
                 format!("{marker} {} ({year}) [tmdbid-{}]", result.title, result.id),
@@ -809,17 +778,17 @@ fn render_manual_identify_dialog(frame: &mut Frame, app: &AppState) {
     lines.extend([
         Line::from(""),
         Line::from(vec![
-            Span::styled("Tab", Style::new().fg(Color::Cyan).bold()),
+            Span::styled("Tab", app.theme.key),
             Span::raw(" field   "),
-            Span::styled("F5", Style::new().fg(Color::Cyan).bold()),
+            Span::styled("F5", app.theme.key),
             Span::raw(" search   "),
-            Span::styled("↑/↓", Style::new().fg(Color::Cyan).bold()),
+            Span::styled("↑/↓", app.theme.key),
             Span::raw(" result   "),
         ]),
         Line::from(vec![
-            Span::styled("Enter", Style::new().fg(Color::Cyan).bold()),
+            Span::styled("Enter", app.theme.key),
             Span::raw(" apply   "),
-            Span::styled("Esc", Style::new().fg(Color::Cyan).bold()),
+            Span::styled("Esc", app.theme.key),
             Span::raw(" cancel"),
         ]),
     ]);
@@ -887,12 +856,12 @@ fn render_status_bar(frame: &mut Frame, app: &AppState, area: Rect) {
     let left_len = left.chars().count();
 
     let status = Line::from(vec![
-        Span::styled(left, Style::new().fg(Color::White).bg(Color::Rgb(40, 40, 40))),
+        Span::styled(left, app.theme.status_left),
         Span::styled(
             " ".repeat((area.width as usize).saturating_sub(left_len + right.len())),
-            Style::new().bg(Color::Rgb(40, 40, 40)),
+            app.theme.status_fill,
         ),
-        Span::styled(right, Style::new().fg(Color::Gray).bg(Color::Rgb(40, 40, 40))),
+        Span::styled(right, app.theme.status_right),
     ]);
 
     let bar = Paragraph::new(status);

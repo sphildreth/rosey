@@ -64,6 +64,21 @@ fn scanner_video_extensions() {
 }
 
 #[test]
+fn scanner_ignores_audio_only_music_directories() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let music_dir = root.join("(Snow) - 90s Hit List (2011)");
+    fs::create_dir(&music_dir).unwrap();
+    fs::write(music_dir.join("01. Third Eye Blind - Semi-charmed Life.mp3"), "audio").unwrap();
+    fs::write(music_dir.join("cover.jpg"), "cover").unwrap();
+
+    let scanner = Scanner::default();
+    let results = scanner.scan(Utf8Path::from_path(root).unwrap());
+
+    assert!(results.is_empty());
+}
+
+#[test]
 fn scanner_empty_directory() {
     let tmp = tempfile::tempdir().unwrap();
     let scanner = Scanner::default();

@@ -1,3 +1,4 @@
+use crate::theme::Theme;
 use camino::Utf8PathBuf;
 use rosey_core::{
     plan_path, run_doctor, score_identification, ConfidenceThresholds, ConflictPolicy,
@@ -113,6 +114,7 @@ pub enum SettingsField {
     Movies,
     Tv,
     DryRun,
+    Theme,
     FollowSymlinks,
     ConflictPolicy,
     MaxWorkers,
@@ -135,6 +137,7 @@ impl SettingsField {
             SettingsField::Movies,
             SettingsField::Tv,
             SettingsField::DryRun,
+            SettingsField::Theme,
             SettingsField::FollowSymlinks,
             SettingsField::ConflictPolicy,
             SettingsField::MaxWorkers,
@@ -157,6 +160,7 @@ impl SettingsField {
             SettingsField::Movies => "Movies Target",
             SettingsField::Tv => "TV Target",
             SettingsField::DryRun => "Dry-run",
+            SettingsField::Theme => "Theme",
             SettingsField::FollowSymlinks => "Follow Symlinks",
             SettingsField::ConflictPolicy => "Conflict Policy",
             SettingsField::MaxWorkers => "Max Workers",
@@ -250,6 +254,7 @@ pub struct AppState {
     pub settings_edit: Option<SettingsEditState>,
     pub doctor_report: DoctorReport,
     pub doctor_scroll: usize,
+    pub theme: Theme,
 }
 
 impl AppState {
@@ -316,6 +321,7 @@ impl AppState {
             settings_edit: None,
             doctor_report: run_doctor(&doctor_config),
             doctor_scroll: 0,
+            theme: Theme::from_config(&config.ui.theme),
         }
     }
 
@@ -632,6 +638,7 @@ impl AppState {
             }
             SettingsField::Tv => self.tv_target.as_ref().map(|p| p.to_string()).unwrap_or_default(),
             SettingsField::DryRun => self.dry_run.to_string(),
+            SettingsField::Theme => self.config.ui.theme.clone(),
             SettingsField::FollowSymlinks => self.follow_symlinks.to_string(),
             SettingsField::ConflictPolicy => {
                 if self.conflict_policy_ask {
@@ -673,6 +680,10 @@ impl AppState {
                 self.tv_target = (!value.is_empty()).then(|| Utf8PathBuf::from(value));
             }
             SettingsField::DryRun => self.dry_run = parse_bool(value)?,
+            SettingsField::Theme => {
+                self.config.ui.theme = value.to_string();
+                self.theme = Theme::from_config(value);
+            }
             SettingsField::FollowSymlinks => self.follow_symlinks = parse_bool(value)?,
             SettingsField::ConflictPolicy => {
                 let normalized = value.to_ascii_lowercase().replace('-', "_");
@@ -748,6 +759,7 @@ impl AppState {
             self.movies_target.as_ref().map(|p| p.to_string()).unwrap_or_default();
         self.config.paths.tv = self.tv_target.as_ref().map(|p| p.to_string()).unwrap_or_default();
         self.config.behavior.dry_run = self.dry_run;
+        self.config.ui.theme = self.config.ui.theme.trim().to_string();
         self.config.behavior.conflict_policy = if self.conflict_policy_ask {
             "ask".to_string()
         } else {
@@ -844,6 +856,17 @@ mod tests {
         assert_eq!(app.confidence_thresholds.yellow, 51);
         assert!(!app.follow_symlinks);
         assert!(!app.is_busy());
+        assert_eq!(app.theme.name, "default");
+    }
+
+    #[test]
+    fn app_state_uses_configured_theme() {
+        let mut config = RoseyConfig::default();
+        config.ui.theme = "rainbow".into();
+
+        let app = AppState::new(&config, Utf8PathBuf::from("/source"), None, None);
+
+        assert_eq!(app.theme.name, "rainbow");
     }
 
     #[test]
@@ -999,10 +1022,18 @@ mod tests {
         app.settings_edit.as_mut().unwrap().value = "key".into();
         app.apply_settings_edit().unwrap();
 
+        app.selected_settings_index =
+            SettingsField::all().iter().position(|field| *field == SettingsField::Theme).unwrap();
+        app.begin_settings_edit();
+        app.settings_edit.as_mut().unwrap().value = "rainbow".into();
+        app.apply_settings_edit().unwrap();
+
         assert_eq!(app.source_path, Utf8PathBuf::from("/new/source"));
         assert_eq!(app.config.paths.source, "/new/source");
         assert!(app.config.identification.use_online_providers);
         assert_eq!(app.config.providers.tmdb_api_key, "key");
+        assert_eq!(app.config.ui.theme, "rainbow");
+        assert_eq!(app.theme.name, "rainbow");
     }
 
     #[test]

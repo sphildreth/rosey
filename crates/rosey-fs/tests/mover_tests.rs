@@ -263,6 +263,44 @@ fn move_with_sidecars_moves_all_files() {
 }
 
 #[test]
+fn move_with_sidecars_moves_nested_subtitle_companions() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+
+    let source_dir = dir.join("source");
+    let subs_dir = source_dir.join("Subs");
+    let dest_dir = dir.join("dest");
+    fs::create_dir_all(&subs_dir).unwrap();
+
+    let main = media_path(&source_dir, "movie.mkv");
+    let same_stem = media_path(&source_dir, "movie.srt");
+    let nested_subtitle = media_path(&subs_dir, "English.srt");
+    fs::write(&main, "video").unwrap();
+    fs::write(&same_stem, "same stem subs").unwrap();
+    fs::write(&nested_subtitle, "nested subs").unwrap();
+
+    let item = MediaItem {
+        kind: rosey_core::MediaKind::Movie,
+        source_path: main.clone(),
+        title: Some("Test Movie".into()),
+        sidecars: vec![same_stem.clone(), nested_subtitle.clone()],
+        ..MediaItem::unknown(main.clone())
+    };
+
+    let dest = media_path(&dest_dir, "Test Movie").join("Test Movie.mkv");
+
+    let result = move_with_sidecars(&item, &dest, ConflictPolicy::Skip, false);
+
+    assert!(result.success);
+    assert!(!main.exists());
+    assert!(!same_stem.exists());
+    assert!(!nested_subtitle.exists());
+    assert!(dest.exists());
+    assert!(dest.parent().unwrap().join("Test Movie.srt").exists());
+    assert!(dest.parent().unwrap().join("Subs").join("English.srt").exists());
+}
+
+#[test]
 fn move_with_sidecars_dry_run() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();

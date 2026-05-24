@@ -119,6 +119,16 @@ Rosey reads `rosey.json` from the platform config directory:
 - Linux/macOS: `$XDG_CONFIG_HOME/rosey/rosey.json`, or `~/.config/rosey/rosey.json`
 - Windows: `%APPDATA%\rosey\rosey.json`
 
+The terminal UI reads `ui.theme` from the config to control TUI colors. Supported values are:
+
+- `default`
+- `terminal`
+- `high_contrast`
+- `no_color`
+- `rainbow`
+
+Unknown values fall back to `default`; the Doctor check can report this configuration issue.
+
 The CLI can persist explicitly supplied path arguments:
 
 ```bash

@@ -1,5 +1,6 @@
 mod app;
 mod renderer;
+mod theme;
 
 use anyhow::Result;
 use camino::Utf8PathBuf;

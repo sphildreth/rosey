@@ -39,3 +39,14 @@ cargo run -p rosey-tui -- /path/to/source /movies /tv
 ```
 
 The TUI also reads `paths.source`, `paths.movies`, and `paths.tv` from config when those positional arguments are omitted. Use tab `7` for Doctor checks and `o` to refresh them.
+
+Theme selection is controlled in `rosey.json` under `ui.theme`.
+Supported values are:
+
+- `default`
+- `terminal`
+- `high_contrast`
+- `no_color`
+- `rainbow`
+
+If you set an unknown value, Rosey falls back to `default`; Doctor reports the mismatch.

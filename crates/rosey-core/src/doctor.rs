@@ -55,6 +55,7 @@ pub fn run_doctor(config: &RoseyConfig) -> DoctorReport {
     check_confidence_thresholds(config, &mut checks);
     check_worker_counts(config, &mut checks);
     check_conflict_policy(&config.behavior.conflict_policy, &mut checks);
+    check_theme(&config.ui.theme, &mut checks);
     check_provider_config(config, &mut checks);
     check_decentdb_migrate(&mut checks);
 
@@ -287,6 +288,20 @@ fn check_conflict_policy(policy: &str, checks: &mut Vec<DoctorCheck>) {
     }
 }
 
+fn check_theme(theme: &str, checks: &mut Vec<DoctorCheck>) {
+    let normalized = theme.trim().to_ascii_lowercase().replace([' ', '-'], "_");
+    match normalized.as_str() {
+        "default" | "system" | "terminal" | "high_contrast" | "no_color" | "rainbow" => {
+            checks.push(ok("TUI theme", "TUI theme is recognized.", theme))
+        }
+        _ => checks.push(warn(
+            "TUI theme",
+            "TUI theme is not recognized; the TUI will fall back to default.",
+            theme,
+        )),
+    }
+}
+
 fn check_provider_config(config: &RoseyConfig, checks: &mut Vec<DoctorCheck>) {
     if config.identification.use_online_providers {
         if config.providers.tmdb_api_key.trim().is_empty() {
@@ -473,5 +488,33 @@ fn check(
         status,
         message: message.into(),
         detail: (!detail.is_empty()).then_some(detail),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn theme_check_accepts_builtin_themes() {
+        for theme in ["default", "system", "terminal", "high_contrast", "no_color", "rainbow"] {
+            let mut checks = Vec::new();
+
+            check_theme(theme, &mut checks);
+
+            assert_eq!(checks.len(), 1);
+            assert_eq!(checks[0].status, DoctorStatus::Ok);
+        }
+    }
+
+    #[test]
+    fn theme_check_warns_for_unknown_theme() {
+        let mut checks = Vec::new();
+
+        check_theme("unknown", &mut checks);
+
+        assert_eq!(checks.len(), 1);
+        assert_eq!(checks[0].status, DoctorStatus::Warn);
+        assert_eq!(checks[0].name, "TUI theme");
     }
 }
