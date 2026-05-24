@@ -1,67 +1,120 @@
 # Rosey Rust
 
-Rosey Rust is the planned Rust rewrite of the existing Python/PySide6 Rosey media organizer.
+Rosey Rust is a fast, robust, cross-platform media organizer for Jellyfin users. It's a rewrite of the Python/PySide6 Rosey application, built in Rust for performance, reliability, and simplified distribution.
 
-The goal is to build a fast, robust, cross-platform media organizer for Jellyfin users with:
+The goal is to provide:
 
-- a Rust core engine
+- a Rust core engine for scanning, identifying, planning, and moving media files
 - a CLI for automation, testing, and parity verification
 - a Ratatui/Crossterm TUI for the main interactive experience
 - golden-master parity testing against the existing Python repo
-- safe file operations with dry-run, journaling, rollback/recovery, and clear logs
+- safe file operations with dry-run, preflight, journaling, rollback/recovery, and clear logs
 
-## Repository strategy
+## Quick start
 
-This repository is intended to live beside the existing Python repo during migration:
+```bash
+# CLI
+cargo run -p rosey-cli -- scan /path/to/media --json
+cargo run -p rosey-cli -- identify "Example.Show.S01E02.mkv" --json
+cargo run -p rosey-cli -- run /path/to/media --movies-target /movies --tv-target /tv --dry-run
 
-```text
-~/github/rosey        # existing Python/PySide6 implementation
-~/github/rosey-rust   # this Rust rewrite
+# TUI
+cargo run -p rosey-tui /path/to/media /movies /tv
 ```
 
-The Python repo remains the behavioral reference until the Rust CLI and TUI prove parity on the important behavior.
-
-## Layout
+## Repository layout
 
 ```text
 crates/
-  rosey-core/        domain models, parsing, planning primitives
-  rosey-fs/          scanner, sidecar discovery, transfer engine
-  rosey-metadata/    metadata provider interfaces and cache boundary
-  rosey-cli/         command-line interface and parity harness
-  rosey-tui/         Ratatui/Crossterm terminal interface
+  rosey-core/        domain models, parser, planner, identifier, scorer, config, grouper
+  rosey-fs/          scanner, sidecar discovery, mover, operation journal
+  rosey-metadata/    TMDB/TVDB providers, SQLite cache, rate limiter
+  rosey-cli/         command-line interface (scan, identify, run) with JSON output
+  rosey-tui/         Ratatui/Crossterm terminal UI (7 screens, keyboard-first)
 docs/                user-facing documents
-design/              PRD, SPEC, ADRs, migration prompts, agent guidance
+design/              PRD, SPEC, ADRs, migration prompts
 tests/
-  fixtures/          input fixture trees/files
-  golden/            expected JSON outputs from Python Rosey v1
+  fixtures/          test fixture trees and sample files
+  golden/            golden JSON outputs and parity tests
 ```
 
-## First commands
+## Features
+
+### Scanner
+- Recursive directory scanning for video files (mkv, mp4, avi, mov, wmv, flv, m4v, mpg, mpeg, webm, ts)
+- Symlink control, error reporting, concurrent traversal
+
+### Identifier
+- Filename pattern parsing: SxxEyy, 1x02, Season/Episode, date-based, multipart
+- Year, date, episode, part, and TMDB ID extraction
+- Title cleanup (quality tags, codecs, release groups, descriptors)
+- NFO file parsing (XML) for title, year, IDs, season/episode
+- Companion file discovery (subtitles, images)
+
+### Planner
+- Jellyfin-compatible destination path generation
+- Movie layout: `Movies/Title (Year)/Title (Year).mkv`
+- TV layout: `TV/Show/Season XX/Show - SxxEyy - Title.mkv`
+- Path sanitization for cross-platform compatibility
+- Conflict suffix generation (KeepBoth policy)
+
+### Mover
+- Dry-run by default
+- Preflight checks (free space, writability, path length)
+- Same-volume atomic rename
+- Cross-volume copy with size verification before source deletion
+- Sidecar file movement (subtitles, images, NFO)
+- Rollback on partial failure
+- JSON Lines operation journal for crash recovery
+- Conflict policies: Skip, Replace, KeepBoth
+
+### CLI
+- `scan` — recursive video file discovery with JSON output
+- `identify` — offline identification for a single file
+- `run` — scan, identify, plan, and optionally move in one command
+- Stable JSON output for scripting and parity testing
+
+### TUI
+- 7 screens: Dashboard, Scan Results, Plan Preview, Transfer Queue, Logs/Recovery, Settings, Help
+- Keyboard-first navigation with discoverable shortcuts
+- Sortable/filterable plan preview with confidence bands
+- Confirmation dialog before destructive operations
+- Progress tracking during moves
+
+### Metadata (optional)
+- TMDB and TVDB providers with rate limiting
+- SQLite-based cache with configurable TTL
+- Fully offline-capable — no provider required for basic organization
+
+## Quality gates
 
 ```bash
-cargo fmt --all
+cargo fmt --all --check
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
-
-cargo run -p rosey-cli -- scan . --json
-cargo run -p rosey-cli -- identify "Example.Show.S01E02.mkv" --json
-cargo run -p rosey-tui
 ```
 
-## Migration rule
+## Testing
 
-No migrated Rust feature is considered done until it either:
+- Unit tests for parser, planner, scanner, mover, sidecars, companions, NFO
+- Integration tests with tempdir for mover and scanner
+- Property-based tests (proptest) for parser/sanitizer no-panic guarantees
+- Golden parity tests comparing Rust output against Python reference
+- Test fixtures: media trees, sidecar collections, NFO files, conflict scenarios
 
-1. passes direct Rust unit/integration tests, or
-2. matches a Python-generated golden output from the existing Rosey repo.
+## Migration status
 
-See:
+All core phases complete. See `design/MIGRATION_PLAN.md` for details.
 
-- `design/MIGRATION_PLAN.md`
-- `design/PARITY_STRATEGY.md`
-- `design/prompts/MASTER_MIGRATION_PROMPT.md`
+Only Phase 10 (cutover) remains: renaming repos, updating badges, and creating the first Rust release.
 
-## Status
+## Reference
 
-Starter repository only. It contains a compiling-oriented skeleton, early domain models, placeholder CLI/TUI entry points, ADRs, and coding-agent prompts.
+The Python Rosey reference implementation lives at `../rosey` and is tagged with `python-baseline`.
+
+Design documents:
+- `design/PRD.md` — Product Requirements Document
+- `design/SPEC.md` — Technical Specification
+- `design/PARITY_STRATEGY.md` — Parity testing strategy
+- `design/MIGRATION_PLAN.md` — Full migration plan with status
+- `design/adr/` — Architecture Decision Records

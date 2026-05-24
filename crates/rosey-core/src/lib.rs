@@ -1,12 +1,20 @@
 pub mod companions;
+pub mod config;
 pub mod errors;
+pub mod grouper;
+pub mod identifier;
 pub mod models;
 pub mod nfo;
 pub mod patterns;
 pub mod planner;
+pub mod scorer;
 
 pub use companions::*;
+pub use config::*;
+pub use grouper::*;
+pub use identifier::*;
 pub use models::*;
 pub use nfo::*;
 pub use patterns::*;
 pub use planner::*;
+pub use scorer::*;

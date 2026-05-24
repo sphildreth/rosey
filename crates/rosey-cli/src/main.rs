@@ -1,13 +1,9 @@
 use anyhow::Result;
-use camino::{Utf8Path, Utf8PathBuf};
+use camino::Utf8PathBuf;
 use clap::{Parser, Subcommand, ValueEnum};
-use rosey_core::{
-    clean_title_with_year, confidence_band, discover_companion_files, find_nfo_for_file, parse_nfo,
-    ConfidenceBand, ConflictPolicy, MediaItem, MediaKind, Score,
-};
+use rosey_core::{confidence_band, ConfidenceBand, ConflictPolicy, MediaItem, MediaKind, Score};
 use rosey_fs::{move_with_sidecars, Scanner};
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 #[derive(Debug, Parser)]
 #[command(name = "rosey")]
@@ -19,59 +15,36 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
-    /// Scan a directory for video files.
     Scan {
         root: Utf8PathBuf,
-
         #[arg(long)]
         json: bool,
-
         #[arg(long, default_value = "8")]
         max_workers: usize,
     },
 
-    /// Run offline filename identification on a single file.
     Identify {
         path: Utf8PathBuf,
-
         #[arg(long)]
         json: bool,
     },
 
-    /// Scan, identify, plan, and optionally move files.
     Run {
-        /// Source directory to scan.
         source: Utf8PathBuf,
-
-        /// Target directory for movies.
         #[arg(long)]
         movies_target: Option<Utf8PathBuf>,
-
-        /// Target directory for TV shows.
         #[arg(long)]
         tv_target: Option<Utf8PathBuf>,
-
-        /// Dry-run mode (default).
         #[arg(long, default_value = "true")]
         dry_run: bool,
-
-        /// Disable dry-run and execute live moves.
         #[arg(long)]
         no_dry_run: bool,
-
-        /// Maximum concurrent workers for scanning.
         #[arg(long, default_value = "8")]
         max_workers: usize,
-
-        /// Minimum confidence threshold to display (0-100).
         #[arg(long, default_value = "0")]
         confidence: u8,
-
-        /// Conflict policy for live moves.
         #[arg(long, value_enum, default_value = "skip")]
         conflict_policy: ConflictPolicyArg,
-
-        /// Output results as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -144,7 +117,26 @@ fn main() -> Result<()> {
         }
 
         Commands::Identify { path, json } => {
-            let output = identify_single_file(&path);
+            let item = rosey_core::identify_file(&path);
+            let nfo_path = rosey_core::find_nfo_for_file(&path);
+
+            let output = IdentifyOutput {
+                path: path.clone(),
+                kind: match item.kind {
+                    MediaKind::Movie => "movie".to_string(),
+                    MediaKind::Episode => "episode".to_string(),
+                    _ => "unknown".to_string(),
+                },
+                title: item.title,
+                year: item.year,
+                season: item.season,
+                episodes: item.episodes,
+                part: item.part,
+                date: item.date,
+                tmdb_id: item.nfo.get("tmdbid").cloned().flatten(),
+                nfo_path,
+            };
+
             if json {
                 println!("{}", serde_json::to_string_pretty(&output)?);
             } else {
@@ -184,8 +176,8 @@ fn main() -> Result<()> {
             let mut results: Vec<RunResultItem> = Vec::new();
 
             for scan_result in &video_files {
-                let item = identify_file(&scan_result.path);
-                let score = score_identification(&item);
+                let item = rosey_core::identify_file(&scan_result.path);
+                let score = rosey_core::score_identification(&item);
 
                 if score.confidence < confidence {
                     continue;
@@ -265,251 +257,6 @@ fn main() -> Result<()> {
     }
 
     Ok(())
-}
-
-/// Identify a single media file from its path.
-fn identify_file(path: &Utf8Path) -> MediaItem {
-    let filename = path.file_name().unwrap_or(path.as_str());
-    let folder_name = path.parent().and_then(|p| p.file_name()).unwrap_or("").to_string();
-
-    // Try NFO
-    let nfo_data = find_nfo_for_file(path).and_then(|p| parse_nfo(&p));
-
-    // Try companion files
-    let companions = discover_companion_files(path);
-
-    // Extract year
-    let year = rosey_core::extract_year(filename).or_else(|| {
-        if !folder_name.is_empty() {
-            rosey_core::extract_year(&folder_name)
-        } else {
-            None
-        }
-    });
-
-    // Try to extract episode info
-    let episode_info = rosey_core::extract_episode_info(filename, None).or_else(|| {
-        if !folder_name.is_empty() {
-            rosey_core::extract_episode_info(&folder_name, None)
-        } else {
-            None
-        }
-    });
-
-    // Extract date
-    let date = rosey_core::extract_date(filename).map(|d| d.date);
-
-    // Extract part
-    let part = rosey_core::extract_part(filename);
-
-    // Determine kind and build item
-    let mut item = if let Some(ref nfo) = nfo_data {
-        if nfo.season.is_some() || nfo.episode.is_some() {
-            MediaItem {
-                kind: MediaKind::Episode,
-                source_path: path.to_path_buf(),
-                title: nfo.title.clone(),
-                year: nfo.year,
-                season: nfo.season,
-                episodes: nfo.episode.map(|e| vec![e]).unwrap_or_default(),
-                part,
-                date: date.clone(),
-                sidecars: companions,
-                nfo: {
-                    let mut map = BTreeMap::new();
-                    if let Some(id) = &nfo.tmdb_id {
-                        map.insert("tmdbid".to_string(), Some(id.clone()));
-                    }
-                    if let Some(id) = &nfo.imdb_id {
-                        map.insert("imdbid".to_string(), Some(id.clone()));
-                    }
-                    if let Some(id) = &nfo.tvdb_id {
-                        map.insert("tvdbid".to_string(), Some(id.clone()));
-                    }
-                    if let Some(title) = &nfo.episode_title {
-                        map.insert("episode_title".to_string(), Some(title.clone()));
-                    }
-                    map
-                },
-            }
-        } else if nfo.tmdb_id.is_some() || nfo.imdb_id.is_some() {
-            MediaItem {
-                kind: MediaKind::Movie,
-                source_path: path.to_path_buf(),
-                title: nfo.title.clone(),
-                year: nfo.year,
-                season: None,
-                episodes: Vec::new(),
-                part,
-                date: date.clone(),
-                sidecars: companions,
-                nfo: {
-                    let mut map = BTreeMap::new();
-                    if let Some(id) = &nfo.tmdb_id {
-                        map.insert("tmdbid".to_string(), Some(id.clone()));
-                    }
-                    if let Some(id) = &nfo.imdb_id {
-                        map.insert("imdbid".to_string(), Some(id.clone()));
-                    }
-                    map
-                },
-            }
-        } else {
-            MediaItem::unknown(path)
-        }
-    } else if let Some(ep) = episode_info {
-        MediaItem {
-            kind: MediaKind::Episode,
-            source_path: path.to_path_buf(),
-            title: {
-                let cleaned = clean_title_with_year(filename, year);
-                if cleaned.is_empty() {
-                    Some(filename.to_string())
-                } else {
-                    Some(cleaned)
-                }
-            },
-            year,
-            season: Some(ep.season),
-            episodes: ep.episodes,
-            part,
-            date: date.clone(),
-            sidecars: companions,
-            nfo: BTreeMap::new(),
-        }
-    } else if date.is_some() {
-        MediaItem {
-            kind: MediaKind::Episode,
-            source_path: path.to_path_buf(),
-            title: {
-                let cleaned = clean_title_with_year(filename, year);
-                if cleaned.is_empty() {
-                    Some(filename.to_string())
-                } else {
-                    Some(cleaned)
-                }
-            },
-            year,
-            season: None,
-            episodes: Vec::new(),
-            part,
-            date: date.clone(),
-            sidecars: companions,
-            nfo: BTreeMap::new(),
-        }
-    } else if year.is_some() || part.is_some() {
-        MediaItem {
-            kind: MediaKind::Movie,
-            source_path: path.to_path_buf(),
-            title: {
-                let cleaned = clean_title_with_year(filename, year);
-                if cleaned.is_empty() {
-                    Some(filename.to_string())
-                } else {
-                    Some(cleaned)
-                }
-            },
-            year,
-            season: None,
-            episodes: Vec::new(),
-            part,
-            date: date.clone(),
-            sidecars: companions,
-            nfo: BTreeMap::new(),
-        }
-    } else {
-        MediaItem::unknown(path)
-    };
-
-    // Enhance title from folder if still unknown
-    if item.title.is_none() && !folder_name.is_empty() {
-        let folder_year = rosey_core::extract_year(&folder_name);
-        item.title = Some(clean_title_with_year(&folder_name, folder_year));
-    }
-
-    item
-}
-
-/// Score an identification result.
-fn score_identification(item: &MediaItem) -> Score {
-    let mut confidence: u8 = 0;
-    let mut reasons: Vec<String> = Vec::new();
-
-    match item.kind {
-        MediaKind::Movie => {
-            if item.title.is_some() {
-                confidence += 40;
-                reasons.push("title found".to_string());
-            }
-            if item.year.is_some() {
-                confidence += 30;
-                reasons.push("year found".to_string());
-            }
-            if !item.nfo.is_empty() {
-                confidence += 20;
-                reasons.push("NFO data".to_string());
-            }
-            if item.part.is_some() {
-                confidence += 10;
-                reasons.push("part found".to_string());
-            }
-        }
-        MediaKind::Episode => {
-            if item.title.is_some() {
-                confidence += 30;
-                reasons.push("title found".to_string());
-            }
-            if item.season.is_some() && !item.episodes.is_empty() {
-                confidence += 40;
-                reasons.push("episode info found".to_string());
-            }
-            if item.date.is_some() {
-                confidence += 40;
-                reasons.push("date found".to_string());
-            }
-            if item.year.is_some() {
-                confidence += 10;
-                reasons.push("year found".to_string());
-            }
-            if !item.nfo.is_empty() {
-                confidence += 20;
-                reasons.push("NFO data".to_string());
-            }
-        }
-        _ => {
-            if item.title.is_some() {
-                confidence += 10;
-                reasons.push("title found".to_string());
-            }
-        }
-    }
-
-    // Cap at 100
-    confidence = confidence.min(100);
-
-    Score { confidence, reasons }
-}
-
-fn identify_single_file(path: &Utf8Path) -> IdentifyOutput {
-    let item = identify_file(path);
-    let nfo_path = find_nfo_for_file(path);
-
-    IdentifyOutput {
-        path: path.to_path_buf(),
-        kind: match item.kind {
-            MediaKind::Movie => "movie".to_string(),
-            MediaKind::Episode => "episode".to_string(),
-            _ => "unknown".to_string(),
-        },
-        title: item.title,
-        year: item.year,
-        season: item.season,
-        episodes: item.episodes,
-        part: item.part,
-        date: item.date,
-        tmdb_id: item.nfo.get("tmdbid").cloned().flatten(),
-        nfo_path,
-    }
 }
 
 fn partition_by_confidence(
