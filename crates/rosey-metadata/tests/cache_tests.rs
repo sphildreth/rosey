@@ -2,7 +2,7 @@ use rosey_metadata::ProviderCache;
 
 fn temp_db() -> (tempfile::TempDir, String) {
     let tmp = tempfile::tempdir().unwrap();
-    let path = tmp.path().join("cache.db");
+    let path = tmp.path().join("cache.ddb");
     (tmp, path.to_str().unwrap().to_string())
 }
 
@@ -21,7 +21,7 @@ fn cache_open_accepts_python_style_directory() {
 
     let cache = ProviderCache::open(&cache_dir, 30).unwrap();
 
-    assert!(cache_dir.join("provider_cache.db").exists());
+    assert!(cache_dir.join("provider_cache.ddb").exists());
     assert_eq!(cache.stats().unwrap().total, 0);
 }
 

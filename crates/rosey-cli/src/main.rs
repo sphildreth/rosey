@@ -2,9 +2,9 @@ use anyhow::Result;
 use camino::Utf8PathBuf;
 use clap::{Parser, Subcommand, ValueEnum};
 use rosey_core::{
-    load_config, save_config as save_rosey_config, score_identification_result, ConfidenceBand,
-    ConfidenceThresholds, ConflictPolicy, IdentifyOptions, MediaItem, MediaKind, RoseyConfig,
-    Score,
+    load_config, run_doctor, save_config as save_rosey_config, score_identification_result,
+    ConfidenceBand, ConfidenceThresholds, ConflictPolicy, DoctorReport, DoctorStatus,
+    IdentifyOptions, MediaItem, MediaKind, RoseyConfig, Score,
 };
 use rosey_fs::{move_with_sidecars, Scanner};
 use rosey_metadata::identify_file_with_metadata;
@@ -30,6 +30,11 @@ enum Commands {
 
     Identify {
         path: Utf8PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+
+    Doctor {
         #[arg(long)]
         json: bool,
     },
@@ -157,6 +162,19 @@ async fn main() -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&output)?);
             } else {
                 println!("{output:#?}");
+            }
+        }
+
+        Commands::Doctor { json } => {
+            let report = run_doctor(&config);
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                print_doctor_report(&report);
+            }
+
+            if report.errors() > 0 {
+                std::process::exit(1);
             }
         }
 
@@ -420,6 +438,32 @@ fn format_item_info(item: &MediaItem) -> String {
             }
         }
         _ => item.title.clone().unwrap_or_else(|| "Unknown".to_string()),
+    }
+}
+
+fn print_doctor_report(report: &DoctorReport) {
+    println!(
+        "Rosey Doctor: {} ({} errors, {} warnings)",
+        doctor_status_label(report.overall),
+        report.errors(),
+        report.warnings()
+    );
+    println!("Config: {}", report.config_path);
+    println!();
+
+    for check in &report.checks {
+        println!("[{}] {} - {}", doctor_status_label(check.status), check.name, check.message);
+        if let Some(detail) = &check.detail {
+            println!("      {detail}");
+        }
+    }
+}
+
+fn doctor_status_label(status: DoctorStatus) -> &'static str {
+    match status {
+        DoctorStatus::Ok => "OK",
+        DoctorStatus::Warn => "WARN",
+        DoctorStatus::Error => "ERROR",
     }
 }
 

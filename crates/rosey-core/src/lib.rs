@@ -1,5 +1,6 @@
 pub mod companions;
 pub mod config;
+pub mod doctor;
 pub mod errors;
 pub mod grouper;
 pub mod identifier;
@@ -11,6 +12,7 @@ pub mod scorer;
 
 pub use companions::*;
 pub use config::*;
+pub use doctor::*;
 pub use grouper::*;
 pub use identifier::*;
 pub use models::*;

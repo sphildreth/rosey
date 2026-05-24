@@ -29,11 +29,12 @@ Complete for the provider, cache, and application integration surface used by th
 
 ## Provider Cache
 
-- **Backend**: SQLite via `sqlite` crate, with Python-style `cache/provider_cache.db` directory handling
+- **Backend**: DecentDB via the `decentdb` crate, with Python-style `cache/provider_cache.ddb` directory handling
 - **Schema**: `(provider, kind, key)` primary key; `data` (JSON text); `updated_at` (unix timestamp)
 - **TTL**: Configurable in days; expired entries deleted on read
 - **Operations**: `get`, `set`, `clear_expired`, `clear_all`, `stats`
-- **Parameter binding**: Uses `?1`, `?2`, etc. positional parameters for safety (no string interpolation for user-controlled values)
+- **Parameter binding**: Uses `$1`, `$2`, etc. positional parameters for safety (no string interpolation for user-controlled values)
+- **Format updates**: Cache open retries unsupported DecentDB file formats through `decentdb-migrate`, writing a temporary `.migrating` file, preserving a `.backup`, and reopening the migrated database
 
 ## Provider Manager
 
@@ -52,7 +53,7 @@ Complete for the provider, cache, and application integration surface used by th
 ## Dependencies Added
 
 - `reqwest = { version = "0.13", features = ["json", "query"] }` — HTTP client
-- `sqlite = "0.36"` — SQLite bindings
+- `decentdb` pinned to `v2.7.0` — embedded cache database
 - `tokio` (already present) — async runtime
 
 ## Test Coverage
@@ -83,3 +84,16 @@ All passing:
 ## Recommended Next Step
 
 Add optional live-provider smoke tests gated on `TMDB_API_KEY` / `TVDB_API_KEY` if release validation needs to cover network behavior.
+
+## DecentDB Update Process
+
+- Bump the workspace `decentdb` Git tag when Rosey should track a new DecentDB release.
+- Keep `decentdb-migrate` available in `PATH`, or point `ROSEY_DECENTDB_MIGRATE` at the matching tool binary.
+- On `UnsupportedFormatVersion`, Rosey attempts an in-place update workflow using `provider_cache.ddb.migrating` and `provider_cache.ddb.backup`, then retries opening the cache.
+- For disposable beta cache resets, `ROSEY_DECENTDB_RESET_ON_UNSUPPORTED=1` removes the unsupported cache file and recreates it instead of running the update tool.
+
+## DecentDB cache file naming for setup phase
+
+- Rename disposable cache filenames to `provider_cache.ddb` and `cache.ddb`.
+- Remove references to `.db` names in phase-specific documentation and test expectations for provider cache files.
+- No old cache data migration is required for this phase; fresh disposable cache files are acceptable.

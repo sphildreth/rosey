@@ -10,7 +10,7 @@ use ratatui::{
     },
     Frame,
 };
-use rosey_core::{ConfidenceBand, MediaKind};
+use rosey_core::{ConfidenceBand, DoctorStatus, MediaKind};
 
 const HEADER_STYLE: Style = Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD);
 const GREEN_STYLE: Style = Style::new().fg(Color::Green);
@@ -46,6 +46,7 @@ pub fn render(frame: &mut Frame, app: &AppState) {
         Screen::TransferQueue => render_transfer_queue(frame, app, chunks[2]),
         Screen::LogsRecovery => render_logs(frame, app, chunks[2]),
         Screen::Settings => render_settings(frame, app, chunks[2]),
+        Screen::Doctor => render_doctor(frame, app, chunks[2]),
         Screen::Help => render_help(frame, app, chunks[2]),
     }
 
@@ -541,13 +542,90 @@ fn render_settings_edit_dialog(frame: &mut Frame, app: &AppState) {
     frame.render_widget(dialog, area);
 }
 
+fn render_doctor(frame: &mut Frame, app: &AppState, area: Rect) {
+    let report = &app.doctor_report;
+    let mut lines = vec![
+        Line::from(vec![
+            Span::styled("Overall: ", GRAY_STYLE),
+            Span::styled(doctor_status_label(report.overall), doctor_status_style(report.overall)),
+            Span::raw(format!("  {} errors, {} warnings", report.errors(), report.warnings())),
+        ]),
+        Line::from(vec![Span::styled("Config:  ", GRAY_STYLE), Span::raw(&report.config_path)]),
+        Line::from(vec![
+            Span::styled("Keys:    ", GRAY_STYLE),
+            Span::raw("o refresh, Up/Down scroll, PgUp/PgDn page"),
+        ]),
+        Line::from(""),
+        Line::from(vec![Span::styled("Attention", HEADER_STYLE)]),
+    ];
+
+    let issues: Vec<_> =
+        report.checks.iter().filter(|check| check.status != DoctorStatus::Ok).collect();
+    if issues.is_empty() {
+        lines.push(Line::from(vec![
+            Span::styled("[OK] ", GREEN_STYLE),
+            Span::raw("No warnings or errors."),
+        ]));
+    } else {
+        for check in &issues {
+            lines.push(doctor_check_line(check));
+            if let Some(detail) = &check.detail {
+                lines.push(Line::from(vec![Span::raw("      "), Span::styled(detail, GRAY_STYLE)]));
+            }
+        }
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![Span::styled("All Checks", HEADER_STYLE)]));
+    for check in &report.checks {
+        lines.push(doctor_check_line(check));
+        if let Some(detail) = &check.detail {
+            lines.push(Line::from(vec![Span::raw("      "), Span::styled(detail, GRAY_STYLE)]));
+        }
+    }
+
+    let scroll = app.doctor_scroll.min(lines.len().saturating_sub(1)) as u16;
+    let doctor = Paragraph::new(lines)
+        .block(Block::default().title(" Doctor ").borders(Borders::ALL))
+        .scroll((scroll, 0))
+        .wrap(Wrap { trim: false });
+    frame.render_widget(doctor, area);
+}
+
+fn doctor_check_line(check: &rosey_core::DoctorCheck) -> Line<'_> {
+    Line::from(vec![
+        Span::styled(
+            format!("[{}] ", doctor_status_label(check.status)),
+            doctor_status_style(check.status),
+        ),
+        Span::styled(format!("{}: ", check.name), WHITE_BOLD),
+        Span::raw(&check.message),
+    ])
+}
+
+fn doctor_status_label(status: DoctorStatus) -> &'static str {
+    match status {
+        DoctorStatus::Ok => "OK",
+        DoctorStatus::Warn => "WARN",
+        DoctorStatus::Error => "ERROR",
+    }
+}
+
+fn doctor_status_style(status: DoctorStatus) -> Style {
+    match status {
+        DoctorStatus::Ok => GREEN_STYLE,
+        DoctorStatus::Warn => YELLOW_STYLE,
+        DoctorStatus::Error => RED_STYLE,
+    }
+}
+
 fn render_help(frame: &mut Frame, _app: &AppState, area: Rect) {
     let help_lines = vec![
         Line::from(""),
         Line::from(vec![Span::styled("Keyboard Shortcuts", Style::new().fg(Color::Cyan).bold())]),
         Line::from(""),
         Line::from(vec![
-            Span::styled("1-7 ", Style::new().fg(Color::Cyan).bold()),
+            Span::styled("1-8 ", Style::new().fg(Color::Cyan).bold()),
             Span::raw("Switch screens"),
         ]),
         Line::from(vec![
@@ -589,6 +667,10 @@ fn render_help(frame: &mut Frame, _app: &AppState, area: Rect) {
         Line::from(vec![
             Span::styled("x  ", Style::new().fg(Color::Cyan).bold()),
             Span::raw("Clean moved source folders on Transfer Queue"),
+        ]),
+        Line::from(vec![
+            Span::styled("o  ", Style::new().fg(Color::Cyan).bold()),
+            Span::raw("Refresh Doctor checks"),
         ]),
         Line::from(vec![
             Span::styled("Esc", Style::new().fg(Color::Cyan).bold()),
@@ -928,6 +1010,17 @@ mod tests {
 
         assert!(text.contains("Edit Source"));
         assert!(text.contains("Value:"));
+    }
+
+    #[test]
+    fn doctor_render_smoke() {
+        let mut app = test_app();
+        app.current_screen = Screen::Doctor;
+
+        let text = render_text(&app);
+
+        assert!(text.contains("Doctor"));
+        assert!(text.contains("Overall"));
     }
 
     #[test]

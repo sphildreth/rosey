@@ -72,8 +72,8 @@ If the file is missing or invalid, Rosey uses built-in defaults.
 
 ## Current Support
 
-The TUI reads configured source, movie target, TV target, dry-run mode, conflict policy, scan concurrency, symlink behavior, confidence thresholds, provider settings, and auto-delete patterns. On the Settings screen, use Up/Down to select a field, `e` to edit it, and `w` or `s` to save the runtime snapshot back to `rosey.json`.
+The TUI reads configured source, movie target, TV target, dry-run mode, conflict policy, scan concurrency, symlink behavior, confidence thresholds, provider settings, and auto-delete patterns. On the Settings screen, use Up/Down to select a field, `e` to edit it, and `w` or `s` to save the runtime snapshot back to `rosey.json`. The Doctor screen reports whether configured paths, provider settings, cache paths, and system tools look usable.
 
-The CLI reads configured source and target paths, scan concurrency, symlink behavior, conflict policy, confidence bands, identification settings, and provider settings. `rosey-cli run --save-config` persists explicitly supplied path arguments. CLI live moves still require `--no-dry-run`; a stored `behavior.dry_run = false` does not make `rosey-cli run` destructive by default.
+The CLI reads configured source and target paths, scan concurrency, symlink behavior, conflict policy, confidence bands, identification settings, and provider settings. `rosey-cli doctor` reports configuration and system readiness, with `--json` for machine-readable output. `rosey-cli run --save-config` persists explicitly supplied path arguments. CLI live moves still require `--no-dry-run`; a stored `behavior.dry_run = false` does not make `rosey-cli run` destructive by default.
 
 Rosey preserves the `ui` section when loading and saving config, although the terminal UI does not use desktop window geometry or splitter settings.

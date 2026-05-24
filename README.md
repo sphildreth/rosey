@@ -8,7 +8,6 @@
 
 <p align="center">
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-green"></a>
-  <img alt="Status" src="https://img.shields.io/badge/status-beta-brightgreen">
   <img alt="Platforms" src="https://img.shields.io/badge/platforms-Windows%20%26%20Linux-8A2BE2">
   <img alt="Rust" src="https://img.shields.io/badge/rust-1.82%2B-orange">
   <img alt="UI" src="https://img.shields.io/badge/UI-Ratatui-41b883">
@@ -32,16 +31,16 @@ Privacy-first: Rosey has no telemetry, and online provider calls happen only whe
 ## Features
 
 - **Offline identification** from filenames, folder structure, season folders, dates, multipart markers, and `.nfo` files
-- **Optional online metadata** with TMDB primary and TVDB support, SQLite caching, TTL expiry, and rate limiting
+- **Optional online metadata** with TMDB primary and TVDB support, DecentDB caching, TTL expiry, and rate limiting
 - **Provider-confirmed path IDs** for `[tmdbid-*]` paths without treating unconfirmed path tags as trusted metadata
 - **Confidence scoring** with reasons and configurable Green/Yellow/Red thresholds
 - **Jellyfin naming conventions** for Movies and TV Shows
 - **Safe batch moves** with dry-run mode, same-volume rename, cross-volume copy-verify-delete, conflict policies, rollback, and JSON Lines journals
 - **Sidecar and companion handling** for subtitles, `.nfo` files, and artwork, including symlinked sidecar files
 - **Configurable cleanup** from the TUI for auto-delete patterns and empty source directories after successful live moves
-- **Terminal UI** with dashboard, scan results, plan preview, transfer queue, logs/recovery, settings, and help screens
+- **Terminal UI** with dashboard, scan results, plan preview, transfer queue, logs/recovery, settings, doctor, and help screens
 - **Manual identification** with terminal-native edits and provider search when providers are enabled
-- **CLI automation** for scan, identify, and full run workflows, including stable JSON output
+- **CLI automation** for scan, identify, doctor, and full run workflows, including stable JSON output
 
 ## Documentation
 
@@ -52,17 +51,6 @@ Privacy-first: Rosey has no telemetry, and online provider calls happen only whe
 - **Troubleshooting**: [docs/TROUBLESHOOTING.md](./docs/TROUBLESHOOTING.md) - common issues
 - **Docs Index**: [docs/README.md](./docs/README.md) - user-facing documentation overview
 - **Architecture Decisions**: [design/adr/README.md](./design/adr/README.md) - ADR index
-
-## Status
-
-**Beta** - core workflows are implemented and tested:
-
-- scanning local, mounted, and network-backed source folders
-- offline identification from filenames, folders, and `.nfo` files
-- optional TMDB/TVDB metadata with caching
-- confidence scoring and destination planning
-- safe dry-run previews and live moves with rollback and journals
-- terminal UI and CLI workflows
 
 Quality gates:
 
@@ -112,6 +100,9 @@ cargo run -p rosey-cli -- scan /path/to/source --json
 # Identify one file
 cargo run -p rosey-cli -- identify "Example.Show.S01E02.mkv" --json
 
+# Check configuration and system readiness
+cargo run -p rosey-cli -- doctor
+
 # Full dry-run workflow
 cargo run -p rosey-cli -- run /path/to/source --movies-target /movies --tv-target /tv --dry-run
 
@@ -134,7 +125,7 @@ The CLI can persist explicitly supplied path arguments:
 cargo run -p rosey-cli -- run /path/to/source --movies-target /movies --tv-target /tv --save-config
 ```
 
-The TUI Settings screen can edit and save paths, dry-run behavior, symlink scanning, conflict policy, confidence thresholds, provider settings, cache TTL, and cleanup patterns.
+The TUI Settings screen can edit and save paths, dry-run behavior, symlink scanning, conflict policy, confidence thresholds, provider settings, cache TTL, and cleanup patterns. The Doctor screen is available as tab `7` and can refresh checks with `o`.
 
 ### Run Tests
 
@@ -160,7 +151,7 @@ cargo test --workspace
 crates/
   rosey-core/        domain models, parser, planner, identifier, scorer, config, grouper
   rosey-fs/          scanner, sidecar discovery, mover, operation journal
-  rosey-metadata/    TMDB/TVDB providers, SQLite cache, rate limiter
+  rosey-metadata/    TMDB/TVDB providers, DecentDB cache, rate limiter
   rosey-cli/         command-line interface with JSON output
   rosey-tui/         Ratatui/Crossterm terminal UI
 docs/                user-facing documentation

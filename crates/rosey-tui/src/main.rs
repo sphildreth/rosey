@@ -271,7 +271,26 @@ fn run_app(
                     KeyCode::Char('4') => app.current_screen = Screen::TransferQueue,
                     KeyCode::Char('5') => app.current_screen = Screen::LogsRecovery,
                     KeyCode::Char('6') => app.current_screen = Screen::Settings,
-                    KeyCode::Char('7') => app.current_screen = Screen::Help,
+                    KeyCode::Char('7') => app.current_screen = Screen::Doctor,
+                    KeyCode::Char('8') => app.current_screen = Screen::Help,
+                    KeyCode::Char('o') | KeyCode::Char('O')
+                        if app.current_screen == Screen::Doctor && !app.is_busy() =>
+                    {
+                        app.refresh_doctor();
+                        app.add_log("Doctor checks refreshed");
+                    }
+                    KeyCode::Up if app.current_screen == Screen::Doctor => {
+                        app.doctor_scroll_up(1);
+                    }
+                    KeyCode::Down if app.current_screen == Screen::Doctor => {
+                        app.doctor_scroll_down(1);
+                    }
+                    KeyCode::PageUp if app.current_screen == Screen::Doctor => {
+                        app.doctor_scroll_up(8);
+                    }
+                    KeyCode::PageDown if app.current_screen == Screen::Doctor => {
+                        app.doctor_scroll_down(8);
+                    }
                     KeyCode::Char('w')
                     | KeyCode::Char('W')
                     | KeyCode::Char('s')

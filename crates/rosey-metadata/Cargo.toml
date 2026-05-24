@@ -9,11 +9,11 @@ rust-version.workspace = true
 
 [dependencies]
 camino.workspace = true
+decentdb.workspace = true
 rosey-core = { path = "../rosey-core" }
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-sqlite.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true

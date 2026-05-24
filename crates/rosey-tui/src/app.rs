@@ -1,7 +1,7 @@
 use camino::Utf8PathBuf;
 use rosey_core::{
-    plan_path, score_identification, ConfidenceThresholds, ConflictPolicy, MediaItem, MediaKind,
-    RoseyConfig, Score,
+    plan_path, run_doctor, score_identification, ConfidenceThresholds, ConflictPolicy,
+    DoctorReport, MediaItem, MediaKind, RoseyConfig, Score,
 };
 use rosey_fs::ScanResult;
 use serde::{Deserialize, Serialize};
@@ -14,6 +14,7 @@ pub enum Screen {
     TransferQueue,
     LogsRecovery,
     Settings,
+    Doctor,
     Help,
 }
 
@@ -26,6 +27,7 @@ impl Screen {
             Screen::TransferQueue,
             Screen::LogsRecovery,
             Screen::Settings,
+            Screen::Doctor,
             Screen::Help,
         ]
     }
@@ -38,6 +40,7 @@ impl Screen {
             Screen::TransferQueue => "Transfer Queue",
             Screen::LogsRecovery => "Logs / Recovery",
             Screen::Settings => "Settings",
+            Screen::Doctor => "Doctor",
             Screen::Help => "Help",
         }
     }
@@ -50,7 +53,8 @@ impl Screen {
             Screen::TransferQueue => "4",
             Screen::LogsRecovery => "5",
             Screen::Settings => "6",
-            Screen::Help => "7",
+            Screen::Doctor => "7",
+            Screen::Help => "8",
         }
     }
 }
@@ -244,6 +248,8 @@ pub struct AppState {
     pub manual_search_running: bool,
     pub selected_settings_index: usize,
     pub settings_edit: Option<SettingsEditState>,
+    pub doctor_report: DoctorReport,
+    pub doctor_scroll: usize,
 }
 
 impl AppState {
@@ -253,6 +259,13 @@ impl AppState {
         movies_target: Option<Utf8PathBuf>,
         tv_target: Option<Utf8PathBuf>,
     ) -> Self {
+        let mut doctor_config = config.clone();
+        doctor_config.paths.source = source_path.to_string();
+        doctor_config.paths.movies =
+            movies_target.as_ref().map(|path| path.to_string()).unwrap_or_default();
+        doctor_config.paths.tv =
+            tv_target.as_ref().map(|path| path.to_string()).unwrap_or_default();
+
         Self {
             config: config.clone(),
             current_screen: Screen::Dashboard,
@@ -301,6 +314,8 @@ impl AppState {
             manual_search_running: false,
             selected_settings_index: 0,
             settings_edit: None,
+            doctor_report: run_doctor(&doctor_config),
+            doctor_scroll: 0,
         }
     }
 
@@ -321,6 +336,29 @@ impl AppState {
     pub fn set_operation(&mut self, status: impl Into<String>, detail: impl Into<String>) {
         self.operation_status = status.into();
         self.operation_detail = detail.into();
+    }
+
+    pub fn refresh_doctor(&mut self) {
+        self.sync_settings_to_config();
+        self.doctor_report = run_doctor(&self.config);
+        self.doctor_scroll = 0;
+        self.set_operation(
+            "Doctor refreshed",
+            format!(
+                "{} errors, {} warnings",
+                self.doctor_report.errors(),
+                self.doctor_report.warnings()
+            ),
+        );
+    }
+
+    pub fn doctor_scroll_up(&mut self, amount: usize) {
+        self.doctor_scroll = self.doctor_scroll.saturating_sub(amount);
+    }
+
+    pub fn doctor_scroll_down(&mut self, amount: usize) {
+        let max_scroll = self.doctor_report.checks.len().saturating_mul(3).saturating_add(12);
+        self.doctor_scroll = self.doctor_scroll.saturating_add(amount).min(max_scroll);
     }
 
     pub fn tick(&mut self) {

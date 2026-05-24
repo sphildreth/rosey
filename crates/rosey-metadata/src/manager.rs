@@ -19,7 +19,7 @@ impl ProviderManager {
         cache_dir: impl AsRef<Path>,
         cache_ttl_days: u32,
         enabled: bool,
-    ) -> Result<Self, sqlite::Error> {
+    ) -> decentdb::Result<Self> {
         let cache = ProviderCache::open(cache_dir, cache_ttl_days)?;
         Ok(Self { cache, enabled, tmdb: None, tvdb: None })
     }
