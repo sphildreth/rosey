@@ -2,7 +2,7 @@
 
 Rosey organizes movie and TV files into Jellyfin-friendly folders.
 
-This Rust rewrite is intended to support:
+Rosey supports:
 
 - scanning source folders
 - identifying movies and TV episodes
@@ -13,7 +13,7 @@ This Rust rewrite is intended to support:
 - operation logs
 - recovery after failed moves
 
-## Planned workflow
+## Workflow
 
 1. Choose source folder.
 2. Choose Movies target folder.

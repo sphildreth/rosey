@@ -1,22 +1,15 @@
-# Rosey Rust Agent Instructions
+# Rosey Agent Instructions
 
-Rosey Rust is a Rust rewrite of the existing Python/PySide6 Rosey media organizer. Rosey organizes Movies and TV Shows into Jellyfin-friendly folders.
+Rosey is a media organizer for Jellyfin. This repository contains the Rust implementation.
 
 ## Repository Layout
 
 ```text
 /docs       user-facing documentation only
-/design     design docs, ADRs, prompts, migration strategy
+/design     design docs, ADRs, prompts, planning notes
 /design/adr architectural decision records
 crates/     Rust workspace crates
 tests/      cross-crate fixtures, golden files, integration assets
-```
-
-Expected sibling layout:
-
-```text
-../rosey        existing Python/PySide6 reference implementation
-../rosey-rust   new Rust implementation
 ```
 
 ## Read First
@@ -24,22 +17,22 @@ Expected sibling layout:
 Before changing code, read the smallest relevant set:
 
 1. `design/SPEC.md`
-2. `design/MIGRATION_STRATEGY.md`
+2. `design/MIGRATION_PLAN.md`
 3. `design/adr/`
 4. the relevant `crates/*`
-5. the matching Python source in `../rosey` when porting behavior
+5. any legacy reference source only when explicitly needed for behavior investigation
 
 ## Non-Negotiables
 
-- Do not mutate `../rosey` unless the user explicitly asks. Treat it as the behavioral reference.
-- Do not make broad rewrites. Work one migration slice at a time.
+- Do not mutate external reference repositories unless the user explicitly asks.
+- Do not make broad rewrites. Work one focused behavior slice at a time.
 - Do not implement destructive file operations without dry-run behavior, temp-dir tests, and a recovery/journal plan.
-- Keep `/docs` user-facing and `/design` for design, ADRs, prompts, and migration notes.
+- Keep `/docs` user-facing and `/design` for design, ADRs, prompts, and planning notes.
 - Add or update an ADR for architecture-significant changes.
 - CLI and core engine behavior must be testable before TUI screens depend on it.
 - Prefer explicit, typed domain models over stringly-typed behavior.
 - Keep UI code out of `rosey-core`.
-- Preserve Python behavior during parity phases, even if a cleanup seems tempting. Record desired improvements separately.
+- Preserve documented behavior unless a change is intentional, tested, and documented.
 
 ## Required Quality Gates
 

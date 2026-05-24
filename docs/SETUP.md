@@ -1,6 +1,6 @@
 # Setup
 
-Rosey Rust is currently a development-stage rewrite.
+Rosey is a media organizer for Jellyfin.
 
 ## Requirements
 

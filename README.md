@@ -1,124 +1,194 @@
-# Rosey Rust
+<p align="center">
+  <img src="./graphics/logo.png" alt="Rosey logo" width="160" />
+</p>
 
-Rosey Rust is a fast, robust, cross-platform media organizer for Jellyfin users. It's a rewrite of the Python/PySide6 Rosey application, built in Rust for performance, reliability, and simplified distribution.
+<h1 align="center">Rosey</h1>
 
-The goal is to provide:
+<p align="center"><b>Media organizer for Jellyfin</b> - scan, identify, preview, and safely organize Movies and TV Shows into Jellyfin-friendly folders.</p>
 
-- a Rust core engine for scanning, identifying, planning, and moving media files
-- a CLI for automation, testing, and parity verification
-- a Ratatui/Crossterm TUI for the main interactive experience
-- golden-master parity testing against the existing Python repo
-- safe file operations with dry-run, preflight, journaling, rollback/recovery, and clear logs
+<p align="center">
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-green"></a>
+  <img alt="Status" src="https://img.shields.io/badge/status-beta-brightgreen">
+  <img alt="Platforms" src="https://img.shields.io/badge/platforms-Windows%20%26%20Linux-8A2BE2">
+  <img alt="Rust" src="https://img.shields.io/badge/rust-1.82%2B-orange">
+  <img alt="UI" src="https://img.shields.io/badge/UI-Ratatui-41b883">
+</p>
 
-## Quick start
+<p align="center">
+  <a href="#features">Features</a> |
+  <a href="#documentation">Documentation</a> |
+  <a href="#status">Status</a> |
+  <a href="#developer-setup">Developer setup</a> |
+  <a href="#contributing">Contributing</a> |
+  <a href="#license">License</a>
+</p>
+
+---
+
+Rosey scans a source folder, identifies Movies and TV Shows from offline signals and optional TMDB/TVDB metadata, previews Jellyfin-ready destinations, and moves selected items with dry-run defaults, preflight checks, sidecar handling, rollback, and operation journals.
+
+Privacy-first: Rosey has no telemetry, and online provider calls happen only when configured and enabled.
+
+## Features
+
+- **Offline identification** from filenames, folder structure, season folders, dates, multipart markers, and `.nfo` files
+- **Optional online metadata** with TMDB primary and TVDB support, SQLite caching, TTL expiry, and rate limiting
+- **Provider-confirmed path IDs** for `[tmdbid-*]` paths without treating unconfirmed path tags as trusted metadata
+- **Confidence scoring** with reasons and configurable Green/Yellow/Red thresholds
+- **Jellyfin naming conventions** for Movies and TV Shows
+- **Safe batch moves** with dry-run mode, same-volume rename, cross-volume copy-verify-delete, conflict policies, rollback, and JSON Lines journals
+- **Sidecar and companion handling** for subtitles, `.nfo` files, and artwork, including symlinked sidecar files
+- **Configurable cleanup** from the TUI for auto-delete patterns and empty source directories after successful live moves
+- **Terminal UI** with dashboard, scan results, plan preview, transfer queue, logs/recovery, settings, and help screens
+- **Manual identification** with terminal-native edits and provider search when providers are enabled
+- **CLI automation** for scan, identify, and full run workflows, including stable JSON output
+
+## Documentation
+
+- **Setup**: [docs/SETUP.md](./docs/SETUP.md) - build and run commands
+- **User Guide**: [docs/USER_GUIDE.md](./docs/USER_GUIDE.md) - workflow and naming goals
+- **Configuration**: [docs/CONFIGURATION.md](./docs/CONFIGURATION.md) - `rosey.json` paths and settings
+- **Safety Model**: [docs/SAFETY_MODEL.md](./docs/SAFETY_MODEL.md) - dry-run, journal, and move safety design
+- **Troubleshooting**: [docs/TROUBLESHOOTING.md](./docs/TROUBLESHOOTING.md) - common issues
+- **Docs Index**: [docs/README.md](./docs/README.md) - user-facing documentation overview
+- **Architecture Decisions**: [design/adr/README.md](./design/adr/README.md) - ADR index
+
+## Status
+
+**Beta** - core workflows are implemented and tested:
+
+- scanning local, mounted, and network-backed source folders
+- offline identification from filenames, folders, and `.nfo` files
+- optional TMDB/TVDB metadata with caching
+- confidence scoring and destination planning
+- safe dry-run previews and live moves with rollback and journals
+- terminal UI and CLI workflows
+
+Quality gates:
 
 ```bash
-# CLI
-cargo run -p rosey-cli -- scan /path/to/media --json
-cargo run -p rosey-cli -- identify "Example.Show.S01E02.mkv" --json
-cargo run -p rosey-cli -- run /path/to/media --movies-target /movies --tv-target /tv --dry-run
-
-# TUI
-cargo run -p rosey-tui /path/to/media /movies /tv
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
 ```
 
-## Repository layout
+Optional release validation can include live TMDB/TVDB smoke tests with user-provided API keys. The default test suite uses local cache-backed tests and does not require network access.
+
+## Developer Setup
+
+**Requirements**
+
+- Rust 1.82 or newer
+- Cargo
+- A terminal with ANSI support; Windows Terminal is recommended on Windows
+- `ffprobe` available on `PATH` for duration checks when movie duration validation is enabled
+
+### Build
+
+```bash
+cargo build --workspace
+```
+
+For release binaries:
+
+```bash
+cargo build --release --workspace
+```
+
+### Run the TUI
+
+```bash
+cargo run -p rosey-tui -- /path/to/source /movies /tv
+```
+
+The TUI also reads configured paths from `rosey.json`, so positional paths can be omitted after configuration.
+
+### Run the CLI
+
+```bash
+# Scan
+cargo run -p rosey-cli -- scan /path/to/source --json
+
+# Identify one file
+cargo run -p rosey-cli -- identify "Example.Show.S01E02.mkv" --json
+
+# Full dry-run workflow
+cargo run -p rosey-cli -- run /path/to/source --movies-target /movies --tv-target /tv --dry-run
+
+# Execute live moves explicitly
+cargo run -p rosey-cli -- run /path/to/source --movies-target /movies --tv-target /tv --no-dry-run
+```
+
+CLI live moves require `--no-dry-run`; a saved `behavior.dry_run = false` does not make the CLI destructive by default.
+
+### Configuration
+
+Rosey reads `rosey.json` from the platform config directory:
+
+- Linux/macOS: `$XDG_CONFIG_HOME/rosey/rosey.json`, or `~/.config/rosey/rosey.json`
+- Windows: `%APPDATA%\rosey\rosey.json`
+
+The CLI can persist explicitly supplied path arguments:
+
+```bash
+cargo run -p rosey-cli -- run /path/to/source --movies-target /movies --tv-target /tv --save-config
+```
+
+The TUI Settings screen can edit and save paths, dry-run behavior, symlink scanning, conflict policy, confidence thresholds, provider settings, cache TTL, and cleanup patterns.
+
+### Run Tests
+
+```bash
+cargo test --workspace
+```
+
+### Run Quality Checks
+
+```bash
+# All checks
+just check
+
+# Individual checks
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+```
+
+## Repository Layout
 
 ```text
 crates/
   rosey-core/        domain models, parser, planner, identifier, scorer, config, grouper
   rosey-fs/          scanner, sidecar discovery, mover, operation journal
   rosey-metadata/    TMDB/TVDB providers, SQLite cache, rate limiter
-  rosey-cli/         command-line interface (scan, identify, run) with JSON output
-  rosey-tui/         Ratatui/Crossterm terminal UI (7 screens, keyboard-first)
-docs/                user-facing documents
-design/              PRD, SPEC, ADRs, migration prompts
+  rosey-cli/         command-line interface with JSON output
+  rosey-tui/         Ratatui/Crossterm terminal UI
+docs/                user-facing documentation
+design/              PRD, SPEC, ADRs, prompts, planning notes
 tests/
-  fixtures/          test fixture trees and sample files
-  golden/            golden JSON outputs and parity tests
-```
-
-## Features
-
-### Scanner
-- Recursive directory scanning for video files (mkv, mp4, avi, mov, wmv, flv, m4v, mpg, mpeg, webm, ts)
-- Symlink control, error reporting, concurrent traversal
-
-### Identifier
-- Filename pattern parsing: SxxEyy, 1x02, Season/Episode, date-based, multipart
-- Year, date, episode, part, and TMDB ID extraction
-- Title cleanup (quality tags, codecs, release groups, descriptors)
-- NFO file parsing (XML) for title, year, IDs, season/episode
-- Provider-confirmed TMDB path IDs when online providers are configured
-- Duration-aware movie rejection through ffprobe for non-fast identification paths
-- Companion file discovery (subtitles, images)
-
-### Planner
-- Jellyfin-compatible destination path generation
-- Movie layout: `Movies/Title (Year)/Title (Year).mkv`
-- TV layout: `TV/Show/Season XX/Show - SxxEyy - Title.mkv`
-- Path sanitization for cross-platform compatibility
-- Conflict suffix generation (KeepBoth policy)
-
-### Mover
-- Dry-run by default
-- Preflight checks (free space, writability, path length)
-- Same-volume atomic rename
-- Cross-volume copy with size verification before source deletion
-- Sidecar file movement (subtitles, images, NFO)
-- Rollback on partial failure
-- JSON Lines operation journal for crash recovery
-- Conflict policies: Skip, Replace, KeepBoth
-
-### CLI
-- `scan` — recursive video file discovery with JSON output
-- `identify` — config-aware identification for a single file
-- `run` — scan, identify, plan, and optionally move in one command
-- `--save-config` — persist explicitly supplied path arguments
-- Stable JSON output for scripting and parity testing
-
-### TUI
-- 7 screens: Dashboard, Scan Results, Plan Preview, Transfer Queue, Logs/Recovery, Settings, Help
-- Keyboard-first navigation with discoverable shortcuts
-- Sortable/filterable plan preview with confidence bands
-- Manual identify overlay with provider search when configured
-- Editable settings screen with config persistence
-- Confirmation dialog before destructive operations
-- Responsive scan, plan, and move progress feedback
-- Journal inspection and explicit post-move cleanup commands
-
-### Metadata (optional)
-- TMDB and TVDB providers with rate limiting
-- SQLite-based cache with configurable TTL
-- Fully offline-capable — no provider required for basic organization
-
-## Quality gates
-
-```bash
-cargo fmt --all --check
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
+  fixtures/          media trees, sidecars, NFO, conflict fixtures
+  golden/            golden JSON parity outputs
 ```
 
 ## Testing
 
-- Unit tests for parser, planner, scanner, mover, sidecars, companions, NFO
-- Integration tests with tempdir for mover and scanner
-- Property-based tests (proptest) for parser/sanitizer no-panic guarantees
-- Golden parity tests comparing Rust output against Python reference
-- Test fixtures: media trees, sidecar collections, NFO files, conflict scenarios
+- Unit tests for parser, planner, NFO parsing, identifier logic, scorer, config, and provider cache
+- Integration tests for scanner, mover, sidecars, companions, rollback, journal, and TUI render smoke coverage
+- Property-based tests for parser, sanitizer, planner, scorer, and identifier no-panic guarantees
+- Golden output tests for behavior stability
+- Temp-directory filesystem tests for destructive-operation safety
 
-## Migration status
+## Contributing
 
-Core, CLI, metadata, and the terminal application now implement the main Python Rosey workflows. Remaining cutover work is concentrated in terminal-level UI smoke/snapshot tests, optional real-provider smoke tests with user-supplied API keys, and repository release tasks. See `design/MIGRATION_PLAN.md` for current status.
+Using AI coding agents? Start with [AGENTS.md](./AGENTS.md). It defines repository conventions, safety requirements, and validation expectations.
 
-## Reference
+Contributions are welcome. A few tips:
 
-The Python Rosey reference implementation lives at `../rosey` and is tagged with `python-baseline`.
+- Keep UI crates thin; shared behavior belongs in `rosey-core`, `rosey-fs`, or `rosey-metadata`
+- Add or update tests for behavior changes, especially filesystem operations
+- Update docs when user-visible behavior or architecture changes
+- Run the full quality gates before opening a PR
 
-Design documents:
-- `design/PRD.md` — Product Requirements Document
-- `design/SPEC.md` — Technical Specification
-- `design/PARITY_STRATEGY.md` — Parity testing strategy
-- `design/MIGRATION_PLAN.md` — Full migration plan with status
-- `design/adr/` — Architecture Decision Records
+## License
+
+MIT - see [LICENSE](./LICENSE).

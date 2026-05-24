@@ -2,7 +2,7 @@
 
 This folder is for user-facing documentation.
 
-Use `/design` for PRDs, technical specs, ADRs, prompts, and internal migration plans.
+Use `/design` for PRDs, technical specs, ADRs, prompts, and internal planning notes.
 
 ## Documents
 

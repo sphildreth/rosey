@@ -1,6 +1,6 @@
 # Configuration
 
-Rosey Rust reads the same JSON config location as Python Rosey:
+Rosey reads `rosey.json` from the platform config directory:
 
 - Linux/macOS: `$XDG_CONFIG_HOME/rosey/rosey.json`, or `~/.config/rosey/rosey.json`
 - Windows: `%APPDATA%\rosey\rosey.json`
@@ -76,4 +76,4 @@ The TUI reads configured source, movie target, TV target, dry-run mode, conflict
 
 The CLI reads configured source and target paths, scan concurrency, symlink behavior, conflict policy, confidence bands, identification settings, and provider settings. `rosey-cli run --save-config` persists explicitly supplied path arguments. CLI live moves still require `--no-dry-run`; a stored `behavior.dry_run = false` does not make `rosey-cli run` destructive by default.
 
-Rust preserves the Python `ui` section when loading and saving config, although the terminal UI does not use PySide6 window geometry or splitter settings.
+Rosey preserves the `ui` section when loading and saving config, although the terminal UI does not use desktop window geometry or splitter settings.

@@ -12,7 +12,7 @@ use serde::Serialize;
 
 #[derive(Debug, Parser)]
 #[command(name = "rosey")]
-#[command(about = "Rosey Rust CLI and migration parity harness")]
+#[command(about = "Rosey media organizer CLI")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
