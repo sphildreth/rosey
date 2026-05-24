@@ -9,7 +9,7 @@ use crate::patterns::{
 };
 
 pub fn identify_file(path: &Utf8Path) -> MediaItem {
-    let filename = path.file_name().unwrap_or(path.as_str());
+    let filename = path.file_stem().unwrap_or(path.as_str());
     let folder_name = path.parent().and_then(|p| p.file_name()).unwrap_or("").to_string();
 
     let nfo_data = find_nfo_for_file(path).and_then(|p| parse_nfo(&p));

@@ -79,7 +79,7 @@ tests/
 - Keyboard-first navigation with discoverable shortcuts
 - Sortable/filterable plan preview with confidence bands
 - Confirmation dialog before destructive operations
-- Progress tracking during moves
+- Responsive scan, plan, and move progress feedback
 
 ### Metadata (optional)
 - TMDB and TVDB providers with rate limiting
@@ -104,9 +104,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 ## Migration status
 
-All core phases complete. See `design/MIGRATION_PLAN.md` for details.
-
-Only Phase 10 (cutover) remains: renaming repos, updating badges, and creating the first Rust release.
+Core filesystem and planner behavior is implemented, but full application parity is not complete yet. Current gaps include config persistence from the Rust UI/CLI, provider-backed identification in the app flow, duration-aware scoring, and terminal-level UI tests. See `design/MIGRATION_PLAN.md` for current status.
 
 ## Reference
 

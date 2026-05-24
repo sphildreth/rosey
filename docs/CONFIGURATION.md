@@ -1,32 +1,67 @@
 # Configuration
 
-Rosey Rust will use a user-editable config file and avoid storing secrets directly in plain text.
+Rosey Rust reads the same JSON config location as Python Rosey:
 
-Planned config shape:
+- Linux/macOS: `$XDG_CONFIG_HOME/rosey/rosey.json`, or `~/.config/rosey/rosey.json`
+- Windows: `%APPDATA%\rosey\rosey.json`
 
-```toml
-[source]
-default_root = "/mnt/incoming"
+If the file is missing or invalid, Rosey uses built-in defaults.
 
-[target]
-movies = "/mnt/media/Movies"
-tv = "/mnt/media/TV"
+## Example
 
-[scan]
-follow_symlinks = false
-max_parallel_local = 8
-max_parallel_network = 3
-
-[moves]
-default_mode = "dry_run"
-conflict_policy = "skip"
-verify_cross_volume_copies = true
-journal_enabled = true
-
-[metadata]
-online_lookups = false
-language = "en-US"
-region = "US"
+```json
+{
+  "version": "1.0",
+  "paths": {
+    "source": "/mnt/incoming",
+    "movies": "/mnt/media/Movies",
+    "tv": "/mnt/media/TV"
+  },
+  "behavior": {
+    "dry_run": true,
+    "auto_select_green": true,
+    "conflict_policy": "skip",
+    "auto_delete_patterns": ["sample.mkv", "*.nfo", "*.txt"]
+  },
+  "scanning": {
+    "concurrency_local": 8,
+    "concurrency_network": 2,
+    "follow_symlinks": false,
+    "enforce_one_media_per_folder": false
+  },
+  "identification": {
+    "use_online_providers": false,
+    "confidence_thresholds": {
+      "green": 70,
+      "yellow": 40
+    },
+    "prefer_nfo_ids": true,
+    "minimum_movie_duration_minutes": 60,
+    "movies_always_in_own_directory": true
+  },
+  "providers": {
+    "tmdb_api_key": "",
+    "tmdb_language": "en-US",
+    "tmdb_region": "US",
+    "tvdb_api_key": "",
+    "tvdb_language": "eng",
+    "cache_ttl_days": 30
+  },
+  "logging": {
+    "level": "INFO",
+    "file_path": "",
+    "max_file_size_mb": 10,
+    "backup_count": 5,
+    "redact_secrets": true,
+    "log_to_console": false
+  }
+}
 ```
 
-Configuration format is subject to change during the migration.
+## Current Support
+
+The TUI reads configured source, movie target, TV target, dry-run mode, conflict policy, scan concurrency, symlink behavior, and confidence thresholds.
+
+The CLI reads configured source and target paths, scan concurrency, symlink behavior, conflict policy, and confidence bands. CLI live moves still require `--no-dry-run`; a stored `behavior.dry_run = false` does not make `rosey-cli run` destructive by default.
+
+Not all Python settings are fully wired yet. In particular, Rust does not yet expose an in-app settings editor, `--save-config`, online provider integration in the identify path, or duration-based confidence scoring.

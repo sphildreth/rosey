@@ -1,7 +1,10 @@
 use anyhow::Result;
 use camino::Utf8PathBuf;
 use clap::{Parser, Subcommand, ValueEnum};
-use rosey_core::{confidence_band, ConfidenceBand, ConflictPolicy, MediaItem, MediaKind, Score};
+use rosey_core::{
+    load_config, ConfidenceBand, ConfidenceThresholds, ConflictPolicy, MediaItem, MediaKind,
+    RoseyConfig, Score,
+};
 use rosey_fs::{move_with_sidecars, Scanner};
 use serde::Serialize;
 
@@ -16,11 +19,11 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Commands {
     Scan {
-        root: Utf8PathBuf,
+        root: Option<Utf8PathBuf>,
         #[arg(long)]
         json: bool,
-        #[arg(long, default_value = "8")]
-        max_workers: usize,
+        #[arg(long)]
+        max_workers: Option<usize>,
     },
 
     Identify {
@@ -30,21 +33,21 @@ enum Commands {
     },
 
     Run {
-        source: Utf8PathBuf,
+        source: Option<Utf8PathBuf>,
         #[arg(long)]
         movies_target: Option<Utf8PathBuf>,
         #[arg(long)]
         tv_target: Option<Utf8PathBuf>,
-        #[arg(long, default_value = "true")]
+        #[arg(long)]
         dry_run: bool,
         #[arg(long)]
         no_dry_run: bool,
-        #[arg(long, default_value = "8")]
-        max_workers: usize,
-        #[arg(long, default_value = "0")]
-        confidence: u8,
-        #[arg(long, value_enum, default_value = "skip")]
-        conflict_policy: ConflictPolicyArg,
+        #[arg(long)]
+        max_workers: Option<usize>,
+        #[arg(long)]
+        confidence: Option<u8>,
+        #[arg(long, value_enum)]
+        conflict_policy: Option<ConflictPolicyArg>,
         #[arg(long)]
         json: bool,
     },
@@ -102,10 +105,16 @@ fn main() -> Result<()> {
     tracing_subscriber::fmt().with_env_filter("warn").init();
 
     let cli = Cli::parse();
+    let config = load_config();
 
     match cli.command {
         Commands::Scan { root, json, max_workers } => {
-            let scanner = Scanner::new(max_workers, false);
+            let Some(root) = resolve_config_path(root, &config.paths.source) else {
+                eprintln!("Error: No source directory specified. Provide SOURCE or set paths.source in config.");
+                std::process::exit(2);
+            };
+            let max_workers = resolve_max_workers(max_workers, &config);
+            let scanner = Scanner::new(max_workers, config.scanning.follow_symlinks);
             let results = scanner.scan(&root);
             if json {
                 println!("{}", serde_json::to_string_pretty(&results)?);
@@ -155,15 +164,24 @@ fn main() -> Result<()> {
             conflict_policy,
             json,
         } => {
-            let conflict_policy: ConflictPolicy = conflict_policy.into();
-            let actually_dry_run = dry_run && !no_dry_run;
+            let Some(source) = resolve_config_path(source, &config.paths.source) else {
+                eprintln!("Error: No source directory specified. Provide SOURCE or set paths.source in config.");
+                std::process::exit(2);
+            };
+            let movies_target = movies_target.or_else(|| optional_path(&config.paths.movies));
+            let tv_target = tv_target.or_else(|| optional_path(&config.paths.tv));
+            let actually_dry_run = resolve_dry_run(&config, dry_run, no_dry_run);
+            let max_workers = resolve_max_workers(max_workers, &config);
+            let confidence = resolve_confidence(confidence, &config);
+            let conflict_policy =
+                resolve_conflict_policy(conflict_policy, &config.behavior.conflict_policy);
 
             if !source.exists() {
                 eprintln!("Error: Source directory does not exist: {source}");
                 std::process::exit(1);
             }
 
-            let scanner = Scanner::new(max_workers, false);
+            let scanner = Scanner::new(max_workers, config.scanning.follow_symlinks);
             let scan_results = scanner.scan(&source);
             let video_files: Vec<_> =
                 scan_results.into_iter().filter(|r| r.is_video && r.error.is_none()).collect();
@@ -192,7 +210,8 @@ fn main() -> Result<()> {
                 results.push(RunResultItem { item, score, destination });
             }
 
-            let (green, yellow, red) = partition_by_confidence(&results);
+            let (green, yellow, red) =
+                partition_by_confidence(&results, &config.identification.confidence_thresholds);
 
             if json {
                 let output = RunOutput {
@@ -210,7 +229,10 @@ fn main() -> Result<()> {
                 println!();
 
                 for item in &results {
-                    let label = confidence_label(item.score.confidence);
+                    let label = confidence_label(
+                        item.score.confidence,
+                        &config.identification.confidence_thresholds,
+                    );
                     let info = format_item_info(&item.item);
                     println!("[{label}] {:3}% | {info}", item.score.confidence);
                     println!("  Source: {}", item.item.source_path);
@@ -261,19 +283,66 @@ fn main() -> Result<()> {
 
 fn partition_by_confidence(
     results: &[RunResultItem],
+    thresholds: &ConfidenceThresholds,
 ) -> (Vec<RunResultItem>, Vec<RunResultItem>, Vec<RunResultItem>) {
-    let green: Vec<_> = results.iter().filter(|r| r.score.confidence >= 70).cloned().collect();
+    let high = thresholds.green.max(thresholds.yellow);
+    let low = thresholds.green.min(thresholds.yellow);
+    let green: Vec<_> = results.iter().filter(|r| r.score.confidence >= high).cloned().collect();
     let yellow: Vec<_> =
-        results.iter().filter(|r| (40..70).contains(&r.score.confidence)).cloned().collect();
-    let red: Vec<_> = results.iter().filter(|r| r.score.confidence < 40).cloned().collect();
+        results.iter().filter(|r| (low..high).contains(&r.score.confidence)).cloned().collect();
+    let red: Vec<_> = results.iter().filter(|r| r.score.confidence < low).cloned().collect();
     (green, yellow, red)
 }
 
-fn confidence_label(confidence: u8) -> &'static str {
-    match confidence_band(confidence) {
+fn confidence_label(confidence: u8, thresholds: &ConfidenceThresholds) -> &'static str {
+    match configured_confidence_band(confidence, thresholds) {
         ConfidenceBand::Green => "GREEN",
         ConfidenceBand::Yellow => "YELLOW",
         ConfidenceBand::Red => "RED",
+    }
+}
+
+fn resolve_config_path(value: Option<Utf8PathBuf>, config_value: &str) -> Option<Utf8PathBuf> {
+    value.or_else(|| optional_path(config_value))
+}
+
+fn optional_path(value: &str) -> Option<Utf8PathBuf> {
+    (!value.is_empty()).then(|| Utf8PathBuf::from(value))
+}
+
+fn resolve_dry_run(_config: &RoseyConfig, _dry_run: bool, no_dry_run: bool) -> bool {
+    !no_dry_run
+}
+
+fn resolve_max_workers(value: Option<usize>, config: &RoseyConfig) -> usize {
+    value.unwrap_or(config.scanning.concurrency_local)
+}
+
+fn resolve_confidence(value: Option<u8>, _config: &RoseyConfig) -> u8 {
+    value.unwrap_or(0)
+}
+
+fn resolve_conflict_policy(
+    override_policy: Option<ConflictPolicyArg>,
+    config_policy: &str,
+) -> ConflictPolicy {
+    override_policy.map(Into::into).unwrap_or_else(|| match config_policy {
+        "replace" => ConflictPolicy::Replace,
+        "keep_both" => ConflictPolicy::KeepBoth,
+        _ => ConflictPolicy::Skip,
+    })
+}
+
+fn configured_confidence_band(confidence: u8, thresholds: &ConfidenceThresholds) -> ConfidenceBand {
+    let high = thresholds.green.max(thresholds.yellow);
+    let low = thresholds.green.min(thresholds.yellow);
+
+    if confidence >= high {
+        ConfidenceBand::Green
+    } else if confidence >= low {
+        ConfidenceBand::Yellow
+    } else {
+        ConfidenceBand::Red
     }
 }
 
@@ -303,5 +372,64 @@ fn format_item_info(item: &MediaItem) -> String {
             }
         }
         _ => item.title.clone().unwrap_or_else(|| "Unknown".to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use camino::Utf8Path;
+
+    #[test]
+    fn config_defaults_fill_missing_cli_values() {
+        let mut config = RoseyConfig::default();
+        config.paths.source = "/config/source".into();
+        config.paths.movies = "/config/movies".into();
+        config.paths.tv = "/config/tv".into();
+        config.behavior.dry_run = false;
+        config.behavior.conflict_policy = "replace".into();
+        config.scanning.concurrency_local = 12;
+        config.identification.confidence_thresholds.green = 83;
+
+        assert_eq!(
+            optional_path(&config.paths.movies).as_deref(),
+            Some(Utf8Path::new("/config/movies"))
+        );
+        assert_eq!(optional_path(&config.paths.tv).as_deref(), Some(Utf8Path::new("/config/tv")));
+        assert_eq!(
+            resolve_config_path(None, &config.paths.source).as_deref(),
+            Some(Utf8Path::new("/config/source"))
+        );
+        assert!(resolve_dry_run(&config, false, false));
+        assert_eq!(resolve_max_workers(None, &config), 12);
+        assert_eq!(resolve_confidence(None, &config), 0);
+        assert_eq!(
+            resolve_conflict_policy(None, &config.behavior.conflict_policy),
+            ConflictPolicy::Replace
+        );
+        assert_eq!(config.scanning.concurrency_local, 12);
+        assert_eq!(config.identification.confidence_thresholds.green, 83);
+    }
+
+    #[test]
+    fn cli_overrides_config_when_present() {
+        let config = RoseyConfig::default();
+        assert_eq!(
+            resolve_config_path(Some(Utf8PathBuf::from("/cli/source")), &config.paths.source)
+                .as_deref(),
+            Some(Utf8Path::new("/cli/source"))
+        );
+        assert!(resolve_dry_run(&config, true, false));
+        assert!(!resolve_dry_run(&config, true, true));
+        assert_eq!(resolve_max_workers(Some(19), &config), 19);
+        assert_eq!(resolve_confidence(Some(61), &config), 61);
+        assert_eq!(
+            resolve_conflict_policy(
+                Some(ConflictPolicyArg::KeepBoth),
+                &config.behavior.conflict_policy
+            ),
+            ConflictPolicy::KeepBoth
+        );
+        assert_eq!(resolve_conflict_policy(None, "ask"), ConflictPolicy::Skip);
     }
 }

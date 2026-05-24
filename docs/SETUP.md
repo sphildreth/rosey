@@ -26,12 +26,15 @@ cargo test --workspace
 ```bash
 cargo run -p rosey-cli -- scan /path/to/source --json
 cargo run -p rosey-cli -- identify "Example.Show.S01E02.mkv" --json
+cargo run -p rosey-cli -- run /path/to/source --movies-target /movies --tv-target /tv
 ```
+
+`scan` and `run` can use `paths.source` from `~/.config/rosey/rosey.json` when the source argument is omitted.
 
 ## Run TUI
 
 ```bash
-cargo run -p rosey-tui
+cargo run -p rosey-tui -- /path/to/source /movies /tv
 ```
 
-The TUI is a starter placeholder until the core and CLI parity harness are implemented.
+The TUI also reads `paths.source`, `paths.movies`, and `paths.tv` from config when those positional arguments are omitted.

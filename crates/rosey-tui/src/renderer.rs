@@ -82,7 +82,7 @@ fn render_tabs(frame: &mut Frame, app: &AppState, area: Rect) {
 fn render_dashboard(frame: &mut Frame, app: &AppState, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(8), Constraint::Min(1)])
+        .constraints([Constraint::Length(8), Constraint::Length(3), Constraint::Min(1)])
         .split(area);
 
     let info_lines = vec![
@@ -134,11 +134,17 @@ fn render_dashboard(frame: &mut Frame, app: &AppState, area: Rect) {
         .block(Block::default().title(" Overview ").borders(Borders::ALL));
 
     frame.render_widget(info, chunks[0]);
+    render_activity(frame, app, chunks[1]);
 
+    let high = app.confidence_thresholds.green.max(app.confidence_thresholds.yellow);
+    let low = app.confidence_thresholds.green.min(app.confidence_thresholds.yellow);
     let stats_lines = vec![
         Line::from(vec![
             Span::styled("Scanned:  ", GRAY_STYLE),
-            Span::raw(format!("{} video files", app.scan_results.len())),
+            Span::raw(format!(
+                "{} video files",
+                app.scan_results.iter().filter(|r| r.is_video).count()
+            )),
         ]),
         Line::from(vec![
             Span::styled("Planned:  ", GRAY_STYLE),
@@ -149,20 +155,20 @@ fn render_dashboard(frame: &mut Frame, app: &AppState, area: Rect) {
             Span::styled("Green:    ", GREEN_STYLE),
             Span::raw(format!(
                 "{} ",
-                app.identified_items.iter().filter(|i| i.score.confidence >= 70).count()
+                app.identified_items.iter().filter(|i| i.score.confidence >= high).count()
             )),
             Span::styled("Yellow:   ", YELLOW_STYLE),
             Span::raw(format!(
                 "{} ",
                 app.identified_items
                     .iter()
-                    .filter(|i| (40..70).contains(&i.score.confidence))
+                    .filter(|i| (low..high).contains(&i.score.confidence))
                     .count()
             )),
             Span::styled("Red:      ", RED_STYLE),
             Span::raw(format!(
                 "{}",
-                app.identified_items.iter().filter(|i| i.score.confidence < 40).count()
+                app.identified_items.iter().filter(|i| i.score.confidence < low).count()
             )),
         ]),
         Line::from(vec![
@@ -174,7 +180,38 @@ fn render_dashboard(frame: &mut Frame, app: &AppState, area: Rect) {
     let stats =
         Paragraph::new(stats_lines).block(Block::default().title(" Status ").borders(Borders::ALL));
 
-    frame.render_widget(stats, chunks[1]);
+    frame.render_widget(stats, chunks[2]);
+}
+
+fn render_activity(frame: &mut Frame, app: &AppState, area: Rect) {
+    let ratio = active_progress_ratio(app).unwrap_or_else(|| {
+        if app.is_busy() {
+            ((app.activity_tick % 20) + 1) as f64 / 20.0
+        } else {
+            0.0
+        }
+    });
+
+    let marker = if app.is_busy() { spinner(app.activity_tick) } else { "OK" };
+    let label = truncate_to_width(
+        &format!("{marker} {} - {}", app.operation_status, app.operation_detail),
+        area.width.saturating_sub(4) as usize,
+    );
+    let style = if app.operation_status.to_lowercase().contains("failed") {
+        RED_STYLE
+    } else if app.is_busy() {
+        Style::new().fg(Color::Cyan)
+    } else {
+        GREEN_STYLE
+    };
+
+    let gauge = Gauge::default()
+        .gauge_style(style)
+        .label(label)
+        .ratio(ratio)
+        .block(Block::default().title(" Activity ").borders(Borders::ALL));
+
+    frame.render_widget(gauge, area);
 }
 
 fn render_scan_results(frame: &mut Frame, app: &AppState, area: Rect) {
@@ -188,15 +225,16 @@ fn render_scan_results(frame: &mut Frame, app: &AppState, area: Rect) {
         return;
     }
 
-    if app.scan_running {
-        let gauge = Gauge::default()
-            .gauge_style(Style::new().fg(Color::Cyan))
-            .label("Scanning...")
-            .block(Block::default().title(" Scanning ").borders(Borders::ALL));
-
-        frame.render_widget(gauge, area);
-        return;
-    }
+    let table_area = if app.scan_running {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(3), Constraint::Min(1)])
+            .split(area);
+        render_activity(frame, app, chunks[0]);
+        chunks[1]
+    } else {
+        area
+    };
 
     let rows: Vec<Row> = app
         .scan_results
@@ -222,14 +260,24 @@ fn render_scan_results(frame: &mut Frame, app: &AppState, area: Rect) {
         .header(Row::new(vec!["Path", "Type", "Size", "Error"]).style(HEADER_STYLE))
         .block(Block::default().title(" Scan Results ").borders(Borders::ALL));
 
-    frame.render_widget(table, area);
+    frame.render_widget(table, table_area);
 }
 
 fn render_plan_preview(frame: &mut Frame, app: &AppState, area: Rect) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(1)])
-        .split(area);
+    let constraints = if app.plan_running {
+        vec![Constraint::Length(3), Constraint::Length(3), Constraint::Min(1)]
+    } else {
+        vec![Constraint::Length(3), Constraint::Min(1)]
+    };
+
+    let chunks =
+        Layout::default().direction(Direction::Vertical).constraints(constraints).split(area);
+    let table_area = if app.plan_running {
+        render_activity(frame, app, chunks[1]);
+        chunks[2]
+    } else {
+        chunks[1]
+    };
 
     let search = Paragraph::new(if app.filter_input_active {
         format!("Filter: {}▌", app.search_query)
@@ -261,7 +309,7 @@ fn render_plan_preview(frame: &mut Frame, app: &AppState, area: Rect) {
         .enumerate()
         .map(|(idx, &item_idx)| {
             let item = &app.identified_items[item_idx];
-            let style = match rosey_core::confidence_band(item.score.confidence) {
+            let style = match configured_confidence_band(app, item.score.confidence) {
                 ConfidenceBand::Green => GREEN_STYLE,
                 ConfidenceBand::Yellow => YELLOW_STYLE,
                 ConfidenceBand::Red => RED_STYLE,
@@ -305,13 +353,13 @@ fn render_plan_preview(frame: &mut Frame, app: &AppState, area: Rect) {
                 .borders(Borders::ALL),
         );
 
-    frame.render_widget(table, chunks[1]);
+    frame.render_widget(table, table_area);
 }
 
 fn render_transfer_queue(frame: &mut Frame, app: &AppState, area: Rect) {
     if app.transfer_queue.is_empty() {
         let empty = Paragraph::new(
-            "No items in transfer queue.\n\nAdd items from Plan Preview by selecting them and pressing 'a' or 'm'.",
+            "No items in transfer queue.\n\nRun a plan, then press 'm' to preview or move planned items.",
         )
         .block(Block::default().borders(Borders::ALL))
         .centered();
@@ -344,6 +392,7 @@ fn render_transfer_queue(frame: &mut Frame, app: &AppState, area: Rect) {
             let (state_str, state_style) = match t.state {
                 TransferState::Pending => ("PENDING", GRAY_STYLE),
                 TransferState::InProgress => ("MOVING...", YELLOW_STYLE),
+                TransferState::WouldMove => ("WOULD MOVE", GREEN_STYLE),
                 TransferState::Completed => ("DONE", GREEN_STYLE),
                 TransferState::Failed => ("FAILED", RED_STYLE),
                 TransferState::Skipped => ("SKIPPED", YELLOW_STYLE),
@@ -359,7 +408,7 @@ fn render_transfer_queue(frame: &mut Frame, app: &AppState, area: Rect) {
         .collect();
 
     let widths = [
-        Constraint::Length(8),
+        Constraint::Length(11),
         Constraint::Percentage(30),
         Constraint::Percentage(50),
         Constraint::Percentage(20),
@@ -406,6 +455,10 @@ fn render_settings(frame: &mut Frame, app: &AppState, area: Rect) {
             Span::raw(format!("{}", app.dry_run)),
         ]),
         Line::from(vec![
+            Span::styled("Follow Symlinks:  ", GRAY_STYLE),
+            Span::raw(format!("{}", app.follow_symlinks)),
+        ]),
+        Line::from(vec![
             Span::styled("Conflict Policy:  ", GRAY_STYLE),
             Span::raw(app.get_conflict_policy_name()),
         ]),
@@ -416,6 +469,17 @@ fn render_settings(frame: &mut Frame, app: &AppState, area: Rect) {
         Line::from(vec![
             Span::styled("Confidence Floor: ", GRAY_STYLE),
             Span::raw(format!("{}", app.confidence_threshold)),
+        ]),
+        Line::from(vec![
+            Span::styled("Bands:            ", GRAY_STYLE),
+            Span::raw(format!(
+                "green >= {}, yellow >= {}",
+                app.confidence_thresholds.green, app.confidence_thresholds.yellow
+            )),
+        ]),
+        Line::from(vec![
+            Span::styled("Status:           ", GRAY_STYLE),
+            Span::raw(app.operation_status.as_str()),
         ]),
         Line::from(""),
         Line::from(vec![
@@ -572,15 +636,21 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
 
 fn render_status_bar(frame: &mut Frame, app: &AppState, area: Rect) {
     let left = format!(
-        " {} | {} items | {} mode | {}",
+        " {} | {} items | {} | {} | {}",
         app.current_screen.title(),
         app.identified_items.len(),
         if app.dry_run { "DRY-RUN" } else { "LIVE" },
-        app.get_conflict_policy_name()
+        app.get_conflict_policy_name(),
+        app.operation_status
     );
 
-    let right = " q:quit  s:scan  p:plan  m:move  ?:help ";
-    let left_len = left.len();
+    let right =
+        if app.is_busy() { " wait  ?:help " } else { " q:quit  s:scan  p:plan  m:move  ?:help " };
+    let right_len = right.chars().count();
+    let left_budget = area.width as usize;
+    let left_budget = left_budget.saturating_sub(right_len);
+    let left = truncate_to_width(&left, left_budget);
+    let left_len = left.chars().count();
 
     let status = Line::from(vec![
         Span::styled(left, Style::new().fg(Color::White).bg(Color::Rgb(40, 40, 40))),
@@ -593,4 +663,65 @@ fn render_status_bar(frame: &mut Frame, app: &AppState, area: Rect) {
 
     let bar = Paragraph::new(status);
     frame.render_widget(bar, area);
+}
+
+fn active_progress_ratio(app: &AppState) -> Option<f64> {
+    if app.transfer_running || app.transfer_progress.1 > 0 {
+        return Some(progress_ratio(app.transfer_progress));
+    }
+
+    if app.plan_running || app.plan_progress.1 > 0 {
+        return Some(progress_ratio(app.plan_progress));
+    }
+
+    if (app.scan_running || app.scan_complete) && app.scan_progress.1 > 0 {
+        return Some(progress_ratio(app.scan_progress));
+    }
+
+    None
+}
+
+fn progress_ratio((done, total): (usize, usize)) -> f64 {
+    if total == 0 {
+        0.0
+    } else {
+        (done as f64 / total as f64).clamp(0.0, 1.0)
+    }
+}
+
+fn spinner(tick: u64) -> &'static str {
+    const FRAMES: [&str; 4] = ["-", "\\", "|", "/"];
+    FRAMES[((tick / 2) as usize) % FRAMES.len()]
+}
+
+fn configured_confidence_band(app: &AppState, confidence: u8) -> ConfidenceBand {
+    let high = app.confidence_thresholds.green.max(app.confidence_thresholds.yellow);
+    let low = app.confidence_thresholds.green.min(app.confidence_thresholds.yellow);
+
+    if confidence >= high {
+        ConfidenceBand::Green
+    } else if confidence >= low {
+        ConfidenceBand::Yellow
+    } else {
+        ConfidenceBand::Red
+    }
+}
+
+fn truncate_to_width(value: &str, max_width: usize) -> String {
+    if max_width == 0 {
+        return String::new();
+    }
+
+    let count = value.chars().count();
+    if count <= max_width {
+        return value.to_string();
+    }
+
+    if max_width <= 3 {
+        return ".".repeat(max_width);
+    }
+
+    let mut truncated: String = value.chars().take(max_width - 3).collect();
+    truncated.push_str("...");
+    truncated
 }

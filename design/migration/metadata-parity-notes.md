@@ -1,7 +1,7 @@
 # Metadata Provider Parity Notes
 
 ## Status
-Complete. Python `TMDBProvider`, `TVDBProvider`, `ProviderCache`, and `ProviderManager` ported to `crates/rosey-metadata`.
+Partial at application level. Python `TMDBProvider`, `TVDBProvider`, `ProviderCache`, and `ProviderManager` are ported to `crates/rosey-metadata`, but provider-backed identification is not yet wired into the CLI/TUI flow.
 
 ## Ported Components
 
@@ -48,6 +48,7 @@ Complete. Python `TMDBProvider`, `TVDBProvider`, `ProviderCache`, and `ProviderM
 3. **No online tests**: TMDB/TVDB providers are not unit-tested against real APIs (requires API keys and network). Cache is tested with temp SQLite DBs.
 4. **No `close()` method**: Rust `reqwest::Client` is `Clone`/`Arc` internally; no explicit close needed.
 5. **Cache `clear_expired` rowcount**: Returns `0` because the `sqlite` crate does not expose `sqlite3_changes()` easily.
+6. **Not integrated into app identification**: CLI and TUI currently use offline `rosey_core::identify_file` and `score_identification`.
 
 ## Dependencies Added
 
@@ -76,10 +77,4 @@ All passing:
 
 ## Recommended Next Slice
 
-**TUI implementation** (`rosey-tui` with Ratatui) — the core engine, CLI, and metadata providers are all now testable and complete. The TUI can be built on top of:
-- `rosey-core` (parser, planner, models)
-- `rosey-fs` (scanner, mover)
-- `rosey-metadata` (providers, cache)
-- `rosey-cli` (command structure, identification logic)
-
-Alternatively, **journal/recovery** parity — implement the JSON Lines operation journal mentioned in `design/SPEC.md` for crash visibility and resume support.
+Wire provider lookups into a shared identification service that can be used by both CLI and TUI while preserving offline behavior when providers are disabled.

@@ -42,6 +42,17 @@ pub fn is_video_path(path: &Utf8Path) -> bool {
 /// If `root` does not exist, returns an empty vector (matching Python behavior).
 /// If `root` is a single file, it is scanned directly.
 pub fn scan(root: &Utf8Path, options: ScanOptions) -> Vec<ScanResult> {
+    scan_with_progress(root, options, |_| {})
+}
+
+pub fn scan_with_progress<F>(
+    root: &Utf8Path,
+    options: ScanOptions,
+    mut on_result: F,
+) -> Vec<ScanResult>
+where
+    F: FnMut(&ScanResult),
+{
     if !root.exists() {
         return Vec::new();
     }
@@ -54,7 +65,9 @@ pub fn scan(root: &Utf8Path, options: ScanOptions) -> Vec<ScanResult> {
         } else {
             0
         };
-        return vec![ScanResult { path: root.to_path_buf(), is_video, size_bytes, error: None }];
+        let result = ScanResult { path: root.to_path_buf(), is_video, size_bytes, error: None };
+        on_result(&result);
+        return vec![result];
     }
 
     let mut walker = WalkDir::new(root).follow_links(options.follow_symlinks);
@@ -63,13 +76,16 @@ pub fn scan(root: &Utf8Path, options: ScanOptions) -> Vec<ScanResult> {
         walker = walker.max_depth(depth);
     }
 
-    walker
-        .into_iter()
-        .filter_map(|entry| match entry {
+    let mut results = Vec::new();
+
+    for entry in walker.into_iter() {
+        let result = match entry {
             Ok(entry) if entry.file_type().is_file() => {
-                let path = Utf8PathBuf::from_path_buf(entry.path().to_path_buf()).ok()?;
+                let Some(path) = Utf8PathBuf::from_path_buf(entry.path().to_path_buf()).ok() else {
+                    continue;
+                };
                 if !is_video_path(&path) {
-                    return None;
+                    continue;
                 }
 
                 let size_bytes = entry.metadata().map(|m| m.len()).unwrap_or_default();
@@ -88,8 +104,15 @@ pub fn scan(root: &Utf8Path, options: ScanOptions) -> Vec<ScanResult> {
                     error: Some(error.to_string()),
                 })
             }
-        })
-        .collect()
+        };
+
+        if let Some(result) = result {
+            on_result(&result);
+            results.push(result);
+        }
+    }
+
+    results
 }
 
 /// Scans filesystem for media files.

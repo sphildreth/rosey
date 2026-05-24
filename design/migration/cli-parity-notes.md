@@ -1,7 +1,7 @@
 # CLI Parity Notes
 
 ## Status
-Complete. Python CLI behavior from `rosey/cli.py` ported to `crates/rosey-cli/src/main.rs`.
+Partial. Python CLI behavior from `rosey/cli.py` is ported to `crates/rosey-cli/src/main.rs` for scan, identify, and run workflows, with config-driven startup defaults wired in for supported fields.
 
 ## Ported Commands
 
@@ -15,14 +15,14 @@ Complete. Python CLI behavior from `rosey/cli.py` ported to `crates/rosey-cli/sr
 
 | Argument | Default | Description |
 |---|---|---|
-| `source` (positional) | required | Source directory to scan |
-| `--movies-target` | `None` | Target directory for movies |
-| `--tv-target` | `None` | Target directory for TV shows |
+| `source` (positional) | `paths.source` | Source directory to scan |
+| `--movies-target` | `paths.movies` | Target directory for movies |
+| `--tv-target` | `paths.tv` | Target directory for TV shows |
 | `--dry-run` | `true` | Dry-run mode (default) |
 | `--no-dry-run` | N/A | Disables dry-run, executes live moves |
-| `--max-workers` | `8` | Concurrent workers for scanning |
+| `--max-workers` | `scanning.concurrency_local` | Concurrent workers for scanning |
 | `--confidence` | `0` | Minimum confidence threshold (0-100) |
-| `--conflict-policy` | `skip` | `skip`, `replace`, `keep_both` |
+| `--conflict-policy` | `behavior.conflict_policy` | `skip`, `replace`, `keep_both`; `ask` maps to safe skip |
 | `--json` | `false` | Output results as JSON |
 
 ## Workflow
@@ -36,7 +36,7 @@ Complete. Python CLI behavior from `rosey/cli.py` ported to `crates/rosey-cli/sr
 3. **Score** — `score_identification()` computes confidence (0-100)
 4. **Filter** — Results below `--confidence` are dropped
 5. **Plan** — `plan_path()` computes Jellyfin-friendly destination
-6. **Display** — Results grouped by confidence band (Green ≥70, Yellow 40-69, Red <40)
+6. **Display** — Results grouped by configured confidence bands
 7. **Move** — If `--no-dry-run`, `move_with_sidecars()` executes the move
 
 ## Output Formats
@@ -53,11 +53,12 @@ Complete. Python CLI behavior from `rosey/cli.py` ported to `crates/rosey-cli/sr
 
 ## Known Gaps / Intentional Deviations
 
-1. **No config file support**: Python loads/saves config via `load_config()`/`save_config()`. Rust CLI does not implement config file persistence yet.
+1. **Config support is partial**: Rust now loads config defaults at startup for supported CLI/TUI fields, but it does not yet implement Python's full config surface or `--save-config` behavior.
 2. **No online metadata**: Python may call TMDB API for identification. Rust CLI is offline-only for now.
 3. **No duration probing**: Python checks video duration for confidence scoring. Not implemented in Rust yet.
 4. **Scoring is simplified**: Python `score_identification` is more nuanced (duration, folder structure, etc.). Rust uses a basic heuristic.
-5. **No `--save-config` flag**: Not implemented.
+5. **Dry-run config is intentionally not destructive in CLI**: Python's CLI defaults to dry-run despite loading config. Rust follows that safety behavior; live moves require explicit `--no-dry-run`.
+6. **No `--save-config` flag**: Not implemented.
 
 ## Test Coverage
 
@@ -81,9 +82,4 @@ All passing:
 
 ## Recommended Next Slice
 
-**TUI implementation** — the CLI now has all the building blocks. The `rosey-tui` crate can be built on top of:
-- `rosey-core` (parser, planner, models)
-- `rosey-fs` (scanner, mover)
-- `rosey-cli` (command structure, identification logic)
-
-Alternatively, **metadata provider parity** (TMDB API client) can be implemented in `rosey-metadata` before the TUI, since online identification improves confidence scores significantly.
+Wire metadata providers and duration-aware scoring into the shared identification flow so the CLI and TUI produce confidence scores closer to Python Rosey.

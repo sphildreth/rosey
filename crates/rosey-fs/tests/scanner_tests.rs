@@ -133,6 +133,27 @@ fn scan_directory_convenience() {
 }
 
 #[test]
+fn scan_with_progress_reports_each_result() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+
+    make_video(root, "a.mkv", "1");
+    make_video(root, "b.mp4", "2");
+    fs::write(root.join("doc.txt"), "not video").unwrap();
+
+    let mut seen = Vec::new();
+    let results =
+        scan_with_progress(Utf8Path::from_path(root).unwrap(), ScanOptions::default(), |result| {
+            seen.push(result.path.clone())
+        });
+
+    assert_eq!(seen.len(), results.len());
+    assert_eq!(results.len(), 2);
+    assert!(seen.iter().any(|path| path.file_name() == Some("a.mkv")));
+    assert!(seen.iter().any(|path| path.file_name() == Some("b.mp4")));
+}
+
+#[test]
 fn scanner_large_tree() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();

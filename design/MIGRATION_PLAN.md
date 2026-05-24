@@ -72,25 +72,34 @@ Expected layout:
 - [x] implement sidecar moves
 - [x] implement rollback/recovery tests
 
-### Phase 7 — CLI [COMPLETE]
+### Phase 7 — CLI [PARTIAL]
 
 - [x] expose scan/identify/plan/move
 - [x] make JSON output stable
 - [x] use CLI for parity testing
+- [x] read supported config defaults for paths, scanning, conflict policy, and confidence bands
+- [ ] implement Python `--save-config`
+- [ ] integrate online metadata and duration-aware scoring into CLI identification
 
-### Phase 8 — TUI [COMPLETE]
+### Phase 8 — TUI [PARTIAL]
 
 - [x] build Ratatui app state (`crates/rosey-tui/src/app.rs` — Screen, AppState, IdentifiedItem, TransferItem, sorting)
 - [x] render dashboards and result tables (7 screens: Dashboard, Scan Results, Plan Preview, Transfer Queue, Logs/Recovery, Settings, Help)
 - [x] wire engine event stream (scan/identify/plan/move driven by keyboard with state machine)
 - [x] require confirmation before destructive execution (confirmation dialog with [y]/[n] for live mode)
+- [x] read supported config defaults at startup
+- [x] keep scan/plan/move work off the input/render loop and show progress feedback
+- [ ] implement in-TUI settings editing and persistence
+- [ ] add terminal-level smoke tests or snapshots for key screens
 
-### Phase 9 — Metadata [COMPLETE]
+### Phase 9 — Metadata [PARTIAL]
 
 - [x] port provider interfaces
 - [x] port cache
 - [x] add TMDB/TVDB support
 - [x] keep offline identification fully functional without providers
+- [ ] wire providers into CLI/TUI identification flow
+- [ ] add parity tests for provider-enabled scoring behavior with mocked responses
 
 ### Phase 10 — Cutover [NOT STARTED]
 
