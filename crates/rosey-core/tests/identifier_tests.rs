@@ -29,6 +29,70 @@ fn path_tmdb_id_without_provider_does_not_enter_nfo() {
     assert_eq!(result.item.nfo.get("tmdbid").and_then(|id| id.as_deref()), None);
 }
 
+#[test]
+fn movie_titles_drop_release_tags_and_technical_segments() {
+    let examples = [
+        (
+            "/media/Good.Luck.Have.Fun.Dont.Die.2025.1080p.WEBRip.x265.10bit.AAC5.1-[YTS.BZ].mp4",
+            "Good Luck Have Fun Dont Die",
+            2025,
+        ),
+        (
+            "/media/Problemista.2023.1080p.WEBRip.x265.10bit.AAC5.1-[YTS.MX].mp4",
+            "Problemista",
+            2023,
+        ),
+        (
+            "/media/Stolen.Assignment.1955.1080p.BluRay.x264.AAC-[YTS.BZ].mp4",
+            "Stolen Assignment",
+            1955,
+        ),
+        (
+            "/media/Project Hail Mary (2026) [IMAX] [1080p] [WEBRip] [x265] [10bit] [5_1] [YTS_BZ].mp4",
+            "Project Hail Mary",
+            2026,
+        ),
+    ];
+
+    for (path, title, year) in examples {
+        let item = identify_file_fast(&Utf8PathBuf::from(path), &RoseyConfig::default()).item;
+
+        assert_eq!(item.kind, MediaKind::Movie, "{path}");
+        assert_eq!(item.title.as_deref(), Some(title), "{path}");
+        assert_eq!(item.year, Some(year), "{path}");
+    }
+}
+
+#[test]
+fn movie_identification_falls_back_to_directory_when_filename_lacks_year() {
+    let item = identify_file_fast(
+        &Utf8PathBuf::from(
+            "/incoming/Carry On Regardless (1961) [1080p] [WEBRip] [YTS.MX]/Carry.On.Regardless.1080p.WEBRip.x264.AAC-[YTS.MX].mp4",
+        ),
+        &RoseyConfig::default(),
+    )
+    .item;
+
+    assert_eq!(item.kind, MediaKind::Movie);
+    assert_eq!(item.title.as_deref(), Some("Carry On Regardless"));
+    assert_eq!(item.year, Some(1961));
+}
+
+#[test]
+fn configured_title_remove_segments_are_removed_case_insensitively() {
+    let mut config = RoseyConfig::default();
+    config.identification.title_remove_segments = vec!["fan edit".into()];
+
+    let item = identify_file_fast(
+        &Utf8PathBuf::from("/media/Example.Movie.Fan.Edit.2024.1080p.WEBRip.mkv"),
+        &config,
+    )
+    .item;
+
+    assert_eq!(item.title.as_deref(), Some("Example Movie"));
+    assert_eq!(item.year, Some(2024));
+}
+
 #[cfg(unix)]
 mod duration_tests {
     use super::*;

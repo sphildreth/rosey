@@ -103,6 +103,8 @@ pub struct BehaviorConfig {
     pub dry_run: bool,
     #[serde(default = "default_true")]
     pub auto_select_green: bool,
+    #[serde(default = "default_true")]
+    pub confirm_delete: bool,
     #[serde(default)]
     pub conflict_policy: String,
     #[serde(default = "default_auto_delete_patterns")]
@@ -121,6 +123,7 @@ impl Default for BehaviorConfig {
         Self {
             dry_run: true,
             auto_select_green: true,
+            confirm_delete: true,
             conflict_policy: "ask".into(),
             auto_delete_patterns: default_auto_delete_patterns(),
         }
@@ -211,6 +214,8 @@ pub struct IdentificationConfig {
     pub minimum_movie_duration_minutes: u32,
     #[serde(default = "default_true")]
     pub movies_always_in_own_directory: bool,
+    #[serde(default)]
+    pub title_remove_segments: Vec<String>,
 }
 
 fn default_sixty() -> u32 {
@@ -243,6 +248,7 @@ impl Default for IdentificationConfig {
             prefer_nfo_ids: true,
             minimum_movie_duration_minutes: default_sixty(),
             movies_always_in_own_directory: true,
+            title_remove_segments: Vec::new(),
         }
     }
 }

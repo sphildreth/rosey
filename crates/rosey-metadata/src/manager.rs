@@ -104,6 +104,100 @@ impl ProviderManager {
         results
     }
 
+    /// Search all configured movie providers.
+    pub async fn search_movie_all(
+        &self,
+        title: &str,
+        year: Option<u16>,
+        use_cache: bool,
+    ) -> Vec<(String, Value)> {
+        if !self.enabled {
+            return Vec::new();
+        }
+
+        let mut results = self
+            .search_movie(title, year, use_cache)
+            .await
+            .into_iter()
+            .map(|value| ("tmdb".to_string(), value))
+            .collect::<Vec<_>>();
+
+        if let Some(tvdb) = &self.tvdb {
+            let cache_key =
+                format!("{}_{}", title, year.map(|y| y.to_string()).unwrap_or_default());
+            let tvdb_results = if use_cache {
+                if let Some(cached) = self
+                    .cache
+                    .get("tvdb", "search_movie", &cache_key)
+                    .and_then(|cached| cached.as_array().cloned())
+                {
+                    cached
+                } else {
+                    let values = tvdb.search_movie(title, year).await;
+                    let _ = self.cache.set(
+                        "tvdb",
+                        "search_movie",
+                        &cache_key,
+                        &Value::Array(values.clone()),
+                    );
+                    values
+                }
+            } else {
+                tvdb.search_movie(title, year).await
+            };
+            results.extend(tvdb_results.into_iter().map(|value| ("tvdb".to_string(), value)));
+        }
+
+        results
+    }
+
+    /// Search all configured TV providers.
+    pub async fn search_tv_all(
+        &self,
+        title: &str,
+        year: Option<u16>,
+        use_cache: bool,
+    ) -> Vec<(String, Value)> {
+        if !self.enabled {
+            return Vec::new();
+        }
+
+        let mut results = self
+            .search_tv(title, year, use_cache)
+            .await
+            .into_iter()
+            .map(|value| ("tmdb".to_string(), value))
+            .collect::<Vec<_>>();
+
+        if let Some(tvdb) = &self.tvdb {
+            let cache_key =
+                format!("{}_{}", title, year.map(|y| y.to_string()).unwrap_or_default());
+            let tvdb_results = if use_cache {
+                if let Some(cached) = self
+                    .cache
+                    .get("tvdb", "search_tv", &cache_key)
+                    .and_then(|cached| cached.as_array().cloned())
+                {
+                    cached
+                } else {
+                    let values = tvdb.search_tv(title, year).await;
+                    let _ = self.cache.set(
+                        "tvdb",
+                        "search_tv",
+                        &cache_key,
+                        &Value::Array(values.clone()),
+                    );
+                    values
+                }
+            } else {
+                tvdb.search_tv(title, year).await
+            };
+            results.extend(tvdb_results.into_iter().map(|value| ("tvdb".to_string(), value)));
+        }
+
+        results
+    }
+
     /// Get movie details by ID.
     pub async fn get_movie_by_id(&self, movie_id: &str, use_cache: bool) -> Option<Value> {
         if !self.enabled || self.tmdb.is_none() {

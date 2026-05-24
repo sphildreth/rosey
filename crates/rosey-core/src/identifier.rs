@@ -1,4 +1,5 @@
 use camino::Utf8Path;
+use regex::Regex;
 use std::collections::BTreeMap;
 use std::process::Command;
 use std::time::Duration;
@@ -135,11 +136,11 @@ fn identify_movie_with_constraints(
             if let Some(item) = directory_constraint_unknown(path, filename, reasons) {
                 return item;
             }
-            let item = identify_movie(path, filename, nfo_data, reasons);
+            let item = identify_movie(path, filename, nfo_data, config, reasons);
             reasons.push("NFO with TMDB/IMDB ID and directory constraints satisfied".to_string());
             return item;
         }
-        return identify_movie(path, filename, nfo_data, reasons);
+        return identify_movie(path, filename, nfo_data, config, reasons);
     }
 
     let duration = if should_check_duration(&config.identification, options) {
@@ -234,14 +235,14 @@ fn identify_movie_after_checks(
                 return unknown_with_title(path, filename);
             }
 
-            let item = identify_movie(path, filename, nfo_data, reasons);
+            let item = identify_movie(path, filename, nfo_data, config, reasons);
             reasons.push(short_duration_reason.to_string());
             return item;
         }
         reasons.push(format!("Duration {duration:.1}min meets minimum"));
     }
 
-    let item = identify_movie(path, filename, nfo_data, reasons);
+    let item = identify_movie(path, filename, nfo_data, config, reasons);
     if let Some(success_reason) = success_reason {
         reasons.push(success_reason.to_string());
     }
@@ -352,19 +353,15 @@ fn identify_movie(
     path: &Utf8Path,
     filename: &str,
     nfo_data: Option<&NfoData>,
+    config: &RoseyConfig,
     reasons: &mut Vec<String>,
 ) -> MediaItem {
     let (title, year) = if let Some(nfo) = nfo_data.filter(|nfo| nfo.title.is_some()) {
         reasons.push("Movie title and year from NFO".to_string());
         (nfo.title.clone(), nfo.year)
     } else {
-        let year = extract_year(filename);
-        let title = Some(clean_title_with_year(filename, year));
-        reasons.push("Movie title from filename".to_string());
-        if let Some(year) = year {
-            reasons.push(format!("Year {year} parsed from filename"));
-        }
-        (title, year)
+        let parsed = parse_movie_title_sources(path, filename, config, reasons);
+        (parsed.title, parsed.year)
     };
 
     let part = extract_part(filename);
@@ -389,6 +386,91 @@ fn identify_movie(
         sidecars,
         nfo: build_nfo_map(nfo_data),
     }
+}
+
+#[derive(Debug, Clone)]
+struct ParsedMovieTitle {
+    title: Option<String>,
+    year: Option<u16>,
+}
+
+fn parse_movie_title_sources(
+    path: &Utf8Path,
+    filename: &str,
+    config: &RoseyConfig,
+    reasons: &mut Vec<String>,
+) -> ParsedMovieTitle {
+    let file = parse_movie_title_segment(filename, config);
+    let folder_name = path.parent().and_then(|p| p.file_name()).unwrap_or("");
+    let folder =
+        (!is_generic_dir(folder_name)).then(|| parse_movie_title_segment(folder_name, config));
+
+    let use_folder = match (&file.title, file.year, &folder) {
+        (_, _, Some(folder)) if folder.title.is_some() && folder.year.is_some() => {
+            file.title.is_none() || file.year.is_none()
+        }
+        _ => false,
+    };
+
+    if use_folder {
+        let folder = folder.expect("folder parsed above");
+        reasons.push("Movie title from directory".to_string());
+        if let Some(year) = folder.year {
+            reasons.push(format!("Year {year} parsed from directory"));
+        }
+        return folder;
+    }
+
+    if file.title.is_some() {
+        reasons.push("Movie title from filename".to_string());
+    } else if let Some(folder) = &folder {
+        if folder.title.is_some() {
+            reasons.push("Movie title from directory".to_string());
+        }
+    }
+
+    let title = file.title.or_else(|| folder.as_ref().and_then(|folder| folder.title.clone()));
+    let year = if let Some(year) = file.year {
+        reasons.push(format!("Year {year} parsed from filename"));
+        Some(year)
+    } else {
+        let folder_year = folder.and_then(|folder| folder.year);
+        if let Some(year) = folder_year {
+            reasons.push(format!("Year {year} parsed from directory"));
+        }
+        folder_year
+    };
+
+    ParsedMovieTitle { title, year }
+}
+
+fn parse_movie_title_segment(raw: &str, config: &RoseyConfig) -> ParsedMovieTitle {
+    let year = extract_year(raw);
+    let title = clean_title_with_config(raw, year, config);
+    ParsedMovieTitle { title: (!title.is_empty()).then_some(title), year }
+}
+
+fn clean_title_with_config(raw: &str, year: Option<u16>, config: &RoseyConfig) -> String {
+    let title = clean_title_with_year(raw, year);
+    remove_configured_title_segments(&title, &config.identification.title_remove_segments)
+}
+
+fn remove_configured_title_segments(title: &str, segments: &[String]) -> String {
+    let mut cleaned = title.to_string();
+    for segment in segments {
+        let normalized = clean_title(segment);
+        if normalized.is_empty() {
+            continue;
+        }
+
+        let pattern = format!(r"(?i)\b{}\b", regex::escape(&normalized));
+        let Ok(regex) = Regex::new(&pattern) else {
+            continue;
+        };
+        cleaned = regex.replace_all(&cleaned, " ").to_string();
+    }
+
+    cleaned.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn derive_show_title(

@@ -54,6 +54,7 @@ mod config_tests {
         assert_eq!(cfg.ui.splitters.vertical, vec![600, 200]);
         assert!(cfg.behavior.dry_run);
         assert!(cfg.behavior.auto_select_green);
+        assert!(cfg.behavior.confirm_delete);
         assert_eq!(cfg.behavior.conflict_policy, "ask");
         assert_eq!(cfg.scanning.concurrency_local, 8);
         assert_eq!(cfg.scanning.concurrency_network, 2);
@@ -62,6 +63,7 @@ mod config_tests {
         assert_eq!(cfg.identification.confidence_thresholds.green, 70);
         assert_eq!(cfg.identification.confidence_thresholds.yellow, 40);
         assert!(cfg.identification.prefer_nfo_ids);
+        assert!(cfg.identification.title_remove_segments.is_empty());
         assert_eq!(cfg.providers.cache_ttl_days, 30);
         assert_eq!(cfg.logging.level, "INFO");
         assert!(cfg.logging.redact_secrets);
@@ -122,9 +124,12 @@ mod config_tests {
         let json = r#"{
             "version": "2.0",
             "paths": {"source": "/media/downloads", "movies": "/media/movies", "tv": "/media/tv"},
-            "behavior": {"dry_run": false, "conflict_policy": "replace"},
+            "behavior": {"dry_run": false, "confirm_delete": false, "conflict_policy": "replace"},
             "scanning": {"concurrency_local": 16},
-            "identification": {"confidence_thresholds": {"green": 80, "yellow": 55}}
+            "identification": {
+                "confidence_thresholds": {"green": 80, "yellow": 55},
+                "title_remove_segments": ["Director Commentary"]
+            }
         }"#;
         std::fs::write(&config_file, json).unwrap();
 
@@ -134,9 +139,11 @@ mod config_tests {
         assert_eq!(cfg.paths.movies, "/media/movies");
         assert_eq!(cfg.paths.tv, "/media/tv");
         assert!(!cfg.behavior.dry_run);
+        assert!(!cfg.behavior.confirm_delete);
         assert_eq!(cfg.behavior.conflict_policy, "replace");
         assert_eq!(cfg.scanning.concurrency_local, 16);
         assert_eq!(cfg.identification.confidence_thresholds.green, 80);
         assert_eq!(cfg.identification.confidence_thresholds.yellow, 55);
+        assert_eq!(cfg.identification.title_remove_segments, vec!["Director Commentary"]);
     }
 }

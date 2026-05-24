@@ -1,8 +1,8 @@
 use crate::theme::Theme;
-use camino::Utf8PathBuf;
+use camino::{Utf8Path, Utf8PathBuf};
 use rosey_core::{
-    plan_path, run_doctor, score_identification, ConfidenceThresholds, ConflictPolicy,
-    DoctorReport, MediaItem, MediaKind, RoseyConfig, Score,
+    identify_file_fast, plan_path, run_doctor, score_identification, ConfidenceThresholds,
+    ConflictPolicy, DoctorReport, MediaItem, MediaKind, RoseyConfig, Score,
 };
 use rosey_fs::ScanResult;
 use serde::{Deserialize, Serialize};
@@ -67,6 +67,37 @@ pub struct IdentifiedItem {
     pub destination: Utf8PathBuf,
 }
 
+impl IdentifiedItem {
+    pub fn destination_directory(&self) -> Option<&Utf8Path> {
+        if self.destination == self.media_item.source_path {
+            return None;
+        }
+        self.destination.parent()
+    }
+
+    pub fn destination_file_exists(&self) -> bool {
+        self.destination != self.media_item.source_path && self.destination.exists()
+    }
+
+    pub fn destination_directory_exists(&self) -> bool {
+        self.destination_directory().is_some_and(Utf8Path::exists)
+    }
+
+    pub fn duplicate_indicator(&self) -> Option<&'static str> {
+        if self.destination_file_exists() {
+            Some("FILE")
+        } else if self.destination_directory_exists() {
+            Some("DIR")
+        } else {
+            None
+        }
+    }
+
+    pub fn is_likely_duplicate(&self) -> bool {
+        self.duplicate_indicator().is_some()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
 pub enum TransferState {
@@ -114,12 +145,14 @@ pub enum SettingsField {
     Movies,
     Tv,
     DryRun,
+    ConfirmDelete,
     Theme,
     FollowSymlinks,
     ConflictPolicy,
     MaxWorkers,
     ConfidenceYellow,
     ConfidenceGreen,
+    TitleRemoveSegments,
     OnlineProviders,
     TmdbApiKey,
     TmdbLanguage,
@@ -137,12 +170,14 @@ impl SettingsField {
             SettingsField::Movies,
             SettingsField::Tv,
             SettingsField::DryRun,
+            SettingsField::ConfirmDelete,
             SettingsField::Theme,
             SettingsField::FollowSymlinks,
             SettingsField::ConflictPolicy,
             SettingsField::MaxWorkers,
             SettingsField::ConfidenceYellow,
             SettingsField::ConfidenceGreen,
+            SettingsField::TitleRemoveSegments,
             SettingsField::OnlineProviders,
             SettingsField::TmdbApiKey,
             SettingsField::TmdbLanguage,
@@ -160,12 +195,14 @@ impl SettingsField {
             SettingsField::Movies => "Movies Target",
             SettingsField::Tv => "TV Target",
             SettingsField::DryRun => "Dry-run",
+            SettingsField::ConfirmDelete => "Confirm Delete",
             SettingsField::Theme => "Theme",
             SettingsField::FollowSymlinks => "Follow Symlinks",
             SettingsField::ConflictPolicy => "Conflict Policy",
             SettingsField::MaxWorkers => "Max Workers",
             SettingsField::ConfidenceYellow => "Yellow Threshold",
             SettingsField::ConfidenceGreen => "Green Threshold",
+            SettingsField::TitleRemoveSegments => "Title Remove Segments",
             SettingsField::OnlineProviders => "Online Providers",
             SettingsField::TmdbApiKey => "TMDB API Key",
             SettingsField::TmdbLanguage => "TMDB Language",
@@ -186,15 +223,22 @@ pub struct SettingsEditState {
 
 #[derive(Debug, Clone)]
 pub struct ManualProviderResult {
+    pub provider: String,
     pub id: String,
     pub kind: MediaKind,
     pub title: String,
     pub year: Option<u16>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ManualEditTarget {
+    Planned { item_index: usize },
+    Scanned { scan_index: usize },
+}
+
 #[derive(Debug, Clone)]
 pub struct ManualEditState {
-    pub item_index: usize,
+    pub target: ManualEditTarget,
     pub field: ManualField,
     pub kind: MediaKind,
     pub title: String,
@@ -204,11 +248,18 @@ pub struct ManualEditState {
     pub search_status: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PendingDelete {
+    PlanItem { item_index: usize },
+    ScanDirectory { directory: Utf8PathBuf },
+}
+
 pub struct AppState {
     pub config: RoseyConfig,
     pub current_screen: Screen,
     pub should_quit: bool,
     pub show_confirmation: bool,
+    pub pending_delete: Option<PendingDelete>,
 
     pub source_path: Utf8PathBuf,
     pub movies_target: Option<Utf8PathBuf>,
@@ -229,6 +280,8 @@ pub struct AppState {
     pub scan_error: Option<String>,
     pub scan_complete: bool,
     pub scan_progress: (usize, usize),
+    pub selected_scan_index: usize,
+    pub plan_after_scan: bool,
 
     pub identified_items: Vec<IdentifiedItem>,
     pub filtered_items: Vec<usize>,
@@ -276,6 +329,7 @@ impl AppState {
             current_screen: Screen::Dashboard,
             should_quit: false,
             show_confirmation: false,
+            pending_delete: None,
 
             source_path,
             movies_target,
@@ -296,6 +350,8 @@ impl AppState {
             scan_error: None,
             scan_complete: false,
             scan_progress: (0, 0),
+            selected_scan_index: 0,
+            plan_after_scan: false,
 
             identified_items: Vec::new(),
             filtered_items: Vec::new(),
@@ -448,20 +504,246 @@ impl AppState {
         self.sort_filtered();
     }
 
+    pub fn scan_previous_item(&mut self) {
+        self.selected_scan_index = self.selected_scan_index.saturating_sub(1);
+    }
+
+    pub fn scan_next_item(&mut self) {
+        let last = self.scan_results.len().saturating_sub(1);
+        self.selected_scan_index = (self.selected_scan_index + 1).min(last);
+    }
+
+    pub fn request_remove_selected_plan_item(&mut self) -> Result<(), String> {
+        let Some(&item_index) = self.filtered_items.get(self.selected_index) else {
+            return Err("No planned move is selected.".to_string());
+        };
+
+        if self.config.behavior.confirm_delete {
+            self.pending_delete = Some(PendingDelete::PlanItem { item_index });
+            return Ok(());
+        }
+
+        self.remove_plan_item(item_index)
+    }
+
+    pub fn request_delete_selected_scan_directory(&mut self) -> Result<(), String> {
+        let directory = self.selected_scan_directory_for_delete()?;
+
+        if self.config.behavior.confirm_delete {
+            self.pending_delete = Some(PendingDelete::ScanDirectory { directory });
+            return Ok(());
+        }
+
+        self.delete_scan_directory(directory)
+    }
+
+    pub fn confirm_pending_delete(&mut self) -> Result<(), String> {
+        let Some(action) = self.pending_delete.take() else {
+            return Ok(());
+        };
+
+        match action {
+            PendingDelete::PlanItem { item_index } => self.remove_plan_item(item_index),
+            PendingDelete::ScanDirectory { directory } => self.delete_scan_directory(directory),
+        }
+    }
+
+    pub fn delete_pending_plan_file_from_disk(&mut self) -> Result<(), String> {
+        let Some(action) = self.pending_delete.take() else {
+            return Err("No pending plan item delete action.".to_string());
+        };
+
+        match action {
+            PendingDelete::PlanItem { item_index } => self.delete_plan_item_file(item_index),
+            other => {
+                self.pending_delete = Some(other);
+                Err("Del is only available for pending plan item removal.".to_string())
+            }
+        }
+    }
+
+    pub fn cancel_pending_delete(&mut self) {
+        self.pending_delete = None;
+    }
+
+    fn selected_scan_directory_for_delete(&self) -> Result<Utf8PathBuf, String> {
+        let Some(scan_result) = self.scan_results.get(self.selected_scan_index) else {
+            return Err("No scanned file is selected.".to_string());
+        };
+
+        if scan_result.error.is_some() || !scan_result.is_video {
+            return Err("Select a scanned video file before deleting a directory.".to_string());
+        }
+
+        let directory = if scan_result.path.is_dir() {
+            scan_result.path.clone()
+        } else {
+            scan_result
+                .path
+                .parent()
+                .map(Utf8Path::to_path_buf)
+                .ok_or_else(|| "Selected scan result has no parent directory.".to_string())?
+        };
+
+        if directory == self.source_path {
+            return Err("Refusing to delete the configured source directory.".to_string());
+        }
+
+        if !self.source_path.as_str().is_empty() && !directory.starts_with(&self.source_path) {
+            return Err(
+                "Refusing to delete a directory outside the configured source path.".to_string()
+            );
+        }
+
+        if !directory.exists() {
+            return Err(format!("Directory no longer exists: {directory}"));
+        }
+
+        if !directory.is_dir() {
+            return Err(format!("Selected delete target is not a directory: {directory}"));
+        }
+
+        Ok(directory)
+    }
+
+    fn remove_plan_item(&mut self, item_index: usize) -> Result<(), String> {
+        if item_index >= self.identified_items.len() {
+            return Err("Planned item no longer exists.".to_string());
+        }
+
+        let item = self.identified_items.remove(item_index);
+        let label = item
+            .media_item
+            .title
+            .as_deref()
+            .unwrap_or_else(|| item.media_item.source_path.as_str())
+            .to_string();
+        self.rebuild_filtered();
+        self.selected_index = self.selected_index.min(self.filtered_items.len().saturating_sub(1));
+        self.set_operation("Plan item removed", format!("Removed {label} from the move plan."));
+        self.add_log(format!("Removed planned move: {label}"));
+        Ok(())
+    }
+
+    fn delete_plan_item_file(&mut self, item_index: usize) -> Result<(), String> {
+        let item = self
+            .identified_items
+            .get(item_index)
+            .ok_or_else(|| "Planned item no longer exists.".to_string())?;
+        let source_path = item.media_item.source_path.clone();
+        let label = item
+            .media_item
+            .title
+            .as_deref()
+            .unwrap_or_else(|| item.media_item.source_path.as_str())
+            .to_string();
+
+        if !source_path.exists() {
+            return Err(format!("Source file no longer exists: {source_path}"));
+        }
+
+        if !source_path.is_file() {
+            return Err(format!("Source path is not a file: {source_path}"));
+        }
+
+        std::fs::remove_file(source_path.as_std_path())
+            .map_err(|err| format!("Failed to delete {source_path}: {err}"))?;
+
+        self.identified_items.remove(item_index);
+        self.scan_results.retain(|result| result.path != source_path);
+        self.selected_scan_index =
+            self.selected_scan_index.min(self.scan_results.len().saturating_sub(1));
+        self.rebuild_filtered();
+        self.selected_index = self.selected_index.min(self.filtered_items.len().saturating_sub(1));
+        self.set_operation(
+            "Source file deleted",
+            format!("Deleted {source_path} and removed {label} from the move plan."),
+        );
+        self.add_log(format!("Deleted source file and removed planned move: {source_path}"));
+        Ok(())
+    }
+
+    fn delete_scan_directory(&mut self, directory: Utf8PathBuf) -> Result<(), String> {
+        std::fs::remove_dir_all(directory.as_std_path())
+            .map_err(|err| format!("Failed to delete {directory}: {err}"))?;
+
+        let before_scan = self.scan_results.len();
+        self.scan_results.retain(|result| !path_is_within(&result.path, &directory));
+        self.selected_scan_index =
+            self.selected_scan_index.min(self.scan_results.len().saturating_sub(1));
+
+        let before_plan = self.identified_items.len();
+        self.identified_items
+            .retain(|item| !path_is_within(&item.media_item.source_path, &directory));
+        self.rebuild_filtered();
+        self.selected_index = self.selected_index.min(self.filtered_items.len().saturating_sub(1));
+
+        let removed_scan = before_scan.saturating_sub(self.scan_results.len());
+        let removed_plan = before_plan.saturating_sub(self.identified_items.len());
+        self.set_operation(
+            "Scan directory deleted",
+            format!(
+                "Deleted {directory}; removed {removed_scan} scan item(s) and {removed_plan} planned move(s)."
+            ),
+        );
+        self.add_log(format!(
+            "Deleted scan directory: {directory} ({removed_scan} scan item(s), {removed_plan} planned move(s) removed)"
+        ));
+        Ok(())
+    }
+
+    pub fn begin_manual_edit_from_scan(&mut self) -> Result<(), String> {
+        let Some(scan_result) = self.scan_results.get(self.selected_scan_index) else {
+            return Err("No scanned file is selected.".to_string());
+        };
+
+        if scan_result.error.is_some() || !scan_result.is_video {
+            return Err("Select a scanned video file before identifying.".to_string());
+        }
+
+        if let Some(item_index) = self
+            .identified_items
+            .iter()
+            .position(|item| item.media_item.source_path == scan_result.path)
+        {
+            self.begin_manual_edit_for_item(item_index);
+            return Ok(());
+        }
+
+        let item = identify_file_fast(&scan_result.path, &self.config).item;
+        self.manual_edit = Some(ManualEditState {
+            target: ManualEditTarget::Scanned { scan_index: self.selected_scan_index },
+            field: ManualField::Title,
+            kind: item.kind,
+            title: item.title.clone().unwrap_or_else(|| {
+                scan_result.path.file_stem().map(str::to_string).unwrap_or_default()
+            }),
+            year: item.year.map(|year| year.to_string()).unwrap_or_default(),
+            provider_results: Vec::new(),
+            provider_index: 0,
+            search_status: "Edit criteria, then press F5 to search providers.".to_string(),
+        });
+        Ok(())
+    }
+
     pub fn begin_manual_edit(&mut self) {
         let Some(&item_index) = self.filtered_items.get(self.selected_index) else {
             return;
         };
+        self.begin_manual_edit_for_item(item_index);
+    }
+
+    fn begin_manual_edit_for_item(&mut self, item_index: usize) {
         let item = &self.identified_items[item_index].media_item;
         self.manual_edit = Some(ManualEditState {
-            item_index,
+            target: ManualEditTarget::Planned { item_index },
             field: ManualField::Title,
             kind: item.kind,
             title: item.title.clone().unwrap_or_default(),
             year: item.year.map(|year| year.to_string()).unwrap_or_default(),
             provider_results: Vec::new(),
             provider_index: 0,
-            search_status: "F5 searches online providers when configured.".to_string(),
+            search_status: "Edit criteria, then press F5 to search providers.".to_string(),
         });
     }
 
@@ -495,6 +777,7 @@ impl AppState {
                 ManualField::Kind => match c.to_ascii_lowercase() {
                     'm' => edit.kind = MediaKind::Movie,
                     'e' | 't' => edit.kind = MediaKind::Episode,
+                    's' => edit.kind = MediaKind::Show,
                     'u' => edit.kind = MediaKind::Unknown,
                     _ => {}
                 },
@@ -512,20 +795,21 @@ impl AppState {
         let Some(edit) = self.manual_edit.take() else {
             return;
         };
-        let Some(item) = self.identified_items.get_mut(edit.item_index) else {
+        let Some(mut media_item) = self.media_item_for_manual_target(&edit) else {
             return;
         };
 
-        item.media_item.kind = edit.kind;
-        item.media_item.title =
-            (!edit.title.trim().is_empty()).then(|| edit.title.trim().to_string());
-        item.media_item.year =
+        media_item.kind = edit.kind;
+        media_item.title = (!edit.title.trim().is_empty()).then(|| edit.title.trim().to_string());
+        media_item.year =
             if edit.year.trim().is_empty() { None } else { edit.year.trim().parse().ok() };
-        item.score = score_identification(&item.media_item);
-        let movies_root = self.movies_target.as_ref().map(|path| path.as_str()).unwrap_or("");
-        let tv_root = self.tv_target.as_ref().map(|path| path.as_str()).unwrap_or("");
-        item.destination = plan_path(&item.media_item, movies_root, tv_root);
-        self.rebuild_filtered();
+        if media_item.kind == MediaKind::Movie {
+            media_item.season = None;
+            media_item.episodes.clear();
+            media_item.date = None;
+        }
+
+        self.upsert_manual_item(edit.target, media_item);
     }
 
     pub fn manual_select_provider_result(&mut self, delta: isize) {
@@ -571,30 +855,85 @@ impl AppState {
             self.manual_edit = Some(edit);
             return;
         };
-        let Some(item) = self.identified_items.get_mut(edit.item_index) else {
+        let Some(mut media_item) = self.media_item_for_manual_target(&edit) else {
             return;
         };
 
-        item.media_item.kind = provider_result.kind;
-        item.media_item.title = Some(provider_result.title.clone());
-        item.media_item.year = provider_result.year;
+        media_item.kind = provider_result.kind;
+        media_item.title = Some(provider_result.title.clone());
+        media_item.year = provider_result.year;
         if provider_result.kind == MediaKind::Movie {
-            item.media_item.season = None;
-            item.media_item.episodes.clear();
-            item.media_item.date = None;
+            media_item.season = None;
+            media_item.episodes.clear();
+            media_item.date = None;
         }
-        item.media_item.nfo.insert("tmdbid".to_string(), Some(provider_result.id.clone()));
-        item.media_item.nfo.insert("_source".to_string(), Some("identification".to_string()));
-        item.media_item.nfo.insert("title".to_string(), Some(provider_result.title.clone()));
+        let id_key = if provider_result.provider == "tvdb" {
+            "tvdbid".to_string()
+        } else {
+            "tmdbid".to_string()
+        };
+        media_item.nfo.insert(id_key, Some(provider_result.id.clone()));
+        media_item.nfo.insert("_source".to_string(), Some("identification".to_string()));
+        media_item.nfo.insert("title".to_string(), Some(provider_result.title.clone()));
         if let Some(year) = provider_result.year {
-            item.media_item.nfo.insert("year".to_string(), Some(year.to_string()));
+            media_item.nfo.insert("year".to_string(), Some(year.to_string()));
         }
 
-        item.score = score_identification(&item.media_item);
+        self.upsert_manual_item(edit.target, media_item);
+    }
+
+    fn media_item_for_manual_target(&self, edit: &ManualEditState) -> Option<MediaItem> {
+        match edit.target {
+            ManualEditTarget::Planned { item_index } => self
+                .identified_items
+                .get(item_index)
+                .map(|identified| identified.media_item.clone()),
+            ManualEditTarget::Scanned { scan_index } => {
+                let scan_result = self.scan_results.get(scan_index)?;
+                Some(identify_file_fast(&scan_result.path, &self.config).item)
+            }
+        }
+    }
+
+    fn upsert_manual_item(&mut self, target: ManualEditTarget, media_item: MediaItem) {
+        let source_path = media_item.source_path.clone();
+        let score = score_identification(&media_item);
         let movies_root = self.movies_target.as_ref().map(|path| path.as_str()).unwrap_or("");
         let tv_root = self.tv_target.as_ref().map(|path| path.as_str()).unwrap_or("");
-        item.destination = plan_path(&item.media_item, movies_root, tv_root);
+        let destination = plan_path(&media_item, movies_root, tv_root);
+        let identified = IdentifiedItem { media_item, score, destination };
+
+        match target {
+            ManualEditTarget::Planned { item_index } => {
+                if let Some(item) = self.identified_items.get_mut(item_index) {
+                    *item = identified;
+                } else {
+                    self.identified_items.push(identified);
+                }
+            }
+            ManualEditTarget::Scanned { .. } => {
+                if let Some(item_index) = self
+                    .identified_items
+                    .iter()
+                    .position(|item| item.media_item.source_path == source_path)
+                {
+                    self.identified_items[item_index] = identified;
+                } else {
+                    self.identified_items.push(identified);
+                }
+            }
+        }
+
         self.rebuild_filtered();
+        if let Some(next_selected) = self.filtered_items.iter().position(|&item_index| {
+            self.identified_items[item_index].media_item.source_path == source_path
+        }) {
+            self.selected_index = next_selected;
+        } else {
+            self.selected_index =
+                self.selected_index.min(self.filtered_items.len().saturating_sub(1));
+        }
+        self.current_screen = Screen::PlanPreview;
     }
 
     pub fn selected_settings_field(&self) -> SettingsField {
@@ -638,6 +977,7 @@ impl AppState {
             }
             SettingsField::Tv => self.tv_target.as_ref().map(|p| p.to_string()).unwrap_or_default(),
             SettingsField::DryRun => self.dry_run.to_string(),
+            SettingsField::ConfirmDelete => self.config.behavior.confirm_delete.to_string(),
             SettingsField::Theme => self.config.ui.theme.clone(),
             SettingsField::FollowSymlinks => self.follow_symlinks.to_string(),
             SettingsField::ConflictPolicy => {
@@ -650,6 +990,9 @@ impl AppState {
             SettingsField::MaxWorkers => self.max_workers.to_string(),
             SettingsField::ConfidenceYellow => self.confidence_threshold.to_string(),
             SettingsField::ConfidenceGreen => self.confidence_thresholds.green.to_string(),
+            SettingsField::TitleRemoveSegments => {
+                self.config.identification.title_remove_segments.join(",")
+            }
             SettingsField::OnlineProviders => {
                 self.config.identification.use_online_providers.to_string()
             }
@@ -680,6 +1023,9 @@ impl AppState {
                 self.tv_target = (!value.is_empty()).then(|| Utf8PathBuf::from(value));
             }
             SettingsField::DryRun => self.dry_run = parse_bool(value)?,
+            SettingsField::ConfirmDelete => {
+                self.config.behavior.confirm_delete = parse_bool(value)?;
+            }
             SettingsField::Theme => {
                 self.config.ui.theme = value.to_string();
                 self.theme = Theme::from_config(value);
@@ -711,6 +1057,14 @@ impl AppState {
             }
             SettingsField::ConfidenceGreen => {
                 self.confidence_thresholds.green = parse_u8_percent(value)?;
+            }
+            SettingsField::TitleRemoveSegments => {
+                self.config.identification.title_remove_segments = value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|segment| !segment.is_empty())
+                    .map(ToString::to_string)
+                    .collect();
             }
             SettingsField::OnlineProviders => {
                 self.config.identification.use_online_providers = parse_bool(value)?;
@@ -798,6 +1152,10 @@ fn conflict_policy_to_config(policy: ConflictPolicy) -> &'static str {
         ConflictPolicy::Replace => "replace",
         ConflictPolicy::KeepBoth => "keep_both",
     }
+}
+
+fn path_is_within(path: &Utf8Path, directory: &Utf8Path) -> bool {
+    path == directory || path.starts_with(directory)
 }
 
 fn parse_bool(value: &str) -> Result<bool, String> {
@@ -912,6 +1270,136 @@ mod tests {
     }
 
     #[test]
+    fn plan_delete_requires_confirmation_then_removes_item() {
+        let config = RoseyConfig::default();
+        let mut app = AppState::new(&config, Utf8PathBuf::from("/source"), None, None);
+        app.current_screen = Screen::PlanPreview;
+        app.identified_items.push(IdentifiedItem {
+            media_item: MediaItem {
+                kind: MediaKind::Movie,
+                source_path: Utf8PathBuf::from("/source/Movie.mkv"),
+                title: Some("Movie".into()),
+                year: Some(2020),
+                season: None,
+                episodes: Vec::new(),
+                part: None,
+                date: None,
+                sidecars: Vec::new(),
+                nfo: Default::default(),
+            },
+            score: Score { confidence: 90, reasons: Vec::new() },
+            destination: Utf8PathBuf::from("/movies/Movie (2020)/Movie (2020).mkv"),
+        });
+        app.rebuild_filtered();
+
+        app.request_remove_selected_plan_item().unwrap();
+
+        assert!(matches!(app.pending_delete, Some(PendingDelete::PlanItem { item_index: 0 })));
+        assert_eq!(app.identified_items.len(), 1);
+
+        app.confirm_pending_delete().unwrap();
+
+        assert!(app.pending_delete.is_none());
+        assert!(app.identified_items.is_empty());
+        assert!(app.filtered_items.is_empty());
+    }
+
+    #[test]
+    fn pending_plan_delete_can_delete_source_file_from_disk() {
+        let temp_root = std::env::temp_dir()
+            .join(format!("rosey-plan-file-delete-test-{}", std::process::id()));
+        std::fs::create_dir_all(&temp_root).unwrap();
+        let source_file = temp_root.join("Movie.mkv");
+        std::fs::write(&source_file, b"movie").unwrap();
+        let source_file = Utf8PathBuf::from_path_buf(source_file).unwrap();
+
+        let config = RoseyConfig::default();
+        let mut app = AppState::new(&config, Utf8PathBuf::from("/source"), None, None);
+        app.scan_results.push(ScanResult {
+            path: source_file.clone(),
+            is_video: true,
+            size_bytes: 5,
+            error: None,
+        });
+        app.identified_items.push(IdentifiedItem {
+            media_item: MediaItem {
+                kind: MediaKind::Movie,
+                source_path: source_file.clone(),
+                title: Some("Movie".into()),
+                year: Some(2020),
+                season: None,
+                episodes: Vec::new(),
+                part: None,
+                date: None,
+                sidecars: Vec::new(),
+                nfo: Default::default(),
+            },
+            score: Score { confidence: 90, reasons: Vec::new() },
+            destination: Utf8PathBuf::from("/movies/Movie (2020)/Movie (2020).mkv"),
+        });
+        app.rebuild_filtered();
+        app.pending_delete = Some(PendingDelete::PlanItem { item_index: 0 });
+
+        app.delete_pending_plan_file_from_disk().unwrap();
+
+        assert!(!source_file.exists());
+        assert!(app.pending_delete.is_none());
+        assert!(app.identified_items.is_empty());
+        assert!(app.scan_results.is_empty());
+
+        let _ = std::fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn scan_directory_delete_removes_directory_and_session_items() {
+        let temp_root =
+            std::env::temp_dir().join(format!("rosey-scan-delete-test-{}", std::process::id()));
+        let source = temp_root.join("source");
+        let media_dir = source.join("Movie (2020)");
+        std::fs::create_dir_all(&media_dir).unwrap();
+        let media_file = media_dir.join("Movie.mkv");
+        std::fs::write(&media_file, b"movie").unwrap();
+
+        let mut config = RoseyConfig::default();
+        config.behavior.confirm_delete = false;
+        let source = Utf8PathBuf::from_path_buf(source).unwrap();
+        let media_dir_utf8 = Utf8PathBuf::from_path_buf(media_dir).unwrap();
+        let media_file = Utf8PathBuf::from_path_buf(media_file).unwrap();
+        let mut app = AppState::new(&config, source, None, None);
+        app.scan_results.push(ScanResult {
+            path: media_file.clone(),
+            is_video: true,
+            size_bytes: 5,
+            error: None,
+        });
+        app.identified_items.push(IdentifiedItem {
+            media_item: MediaItem {
+                kind: MediaKind::Movie,
+                source_path: media_file,
+                title: Some("Movie".into()),
+                year: Some(2020),
+                season: None,
+                episodes: Vec::new(),
+                part: None,
+                date: None,
+                sidecars: Vec::new(),
+                nfo: Default::default(),
+            },
+            score: Score { confidence: 90, reasons: Vec::new() },
+            destination: Utf8PathBuf::from("/movies/Movie (2020)/Movie (2020).mkv"),
+        });
+        app.rebuild_filtered();
+
+        app.request_delete_selected_scan_directory().unwrap();
+
+        assert!(!media_dir_utf8.exists());
+        assert!(app.scan_results.is_empty());
+        assert!(app.identified_items.is_empty());
+
+        let _ = std::fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
     fn manual_edit_does_not_mark_provider_metadata() {
         let config = RoseyConfig::default();
         let media_item = MediaItem {
@@ -949,6 +1437,39 @@ mod tests {
     }
 
     #[test]
+    fn manual_identify_from_scan_adds_item_to_move_plan() {
+        let config = RoseyConfig::default();
+        let mut app = AppState::new(
+            &config,
+            Utf8PathBuf::from("/source"),
+            Some(Utf8PathBuf::from("/movies")),
+            Some(Utf8PathBuf::from("/tv")),
+        );
+        app.current_screen = Screen::ScanResults;
+        app.scan_results.push(ScanResult {
+            path: Utf8PathBuf::from("/source/Old.Name.2000.mkv"),
+            is_video: true,
+            size_bytes: 1_000,
+            error: None,
+        });
+
+        app.begin_manual_edit_from_scan().unwrap();
+        if let Some(edit) = &mut app.manual_edit {
+            edit.kind = MediaKind::Movie;
+            edit.title = "Correct Name".into();
+            edit.year = "2020".into();
+        }
+        app.apply_manual_edit();
+
+        assert_eq!(app.current_screen, Screen::PlanPreview);
+        assert_eq!(app.identified_items.len(), 1);
+        let item = &app.identified_items[0];
+        assert_eq!(item.media_item.title.as_deref(), Some("Correct Name"));
+        assert_eq!(item.media_item.year, Some(2020));
+        assert!(item.destination.as_str().contains("Correct Name (2020)"));
+    }
+
+    #[test]
     fn provider_selection_marks_identification_metadata() {
         let config = RoseyConfig::default();
         let media_item = MediaItem {
@@ -973,6 +1494,7 @@ mod tests {
         app.begin_manual_edit();
         if let Some(edit) = &mut app.manual_edit {
             edit.provider_results.push(ManualProviderResult {
+                provider: "tmdb".into(),
                 id: "603".into(),
                 kind: MediaKind::Movie,
                 title: "The Matrix".into(),
@@ -1028,12 +1550,21 @@ mod tests {
         app.settings_edit.as_mut().unwrap().value = "rainbow".into();
         app.apply_settings_edit().unwrap();
 
+        app.selected_settings_index = SettingsField::all()
+            .iter()
+            .position(|field| *field == SettingsField::TitleRemoveSegments)
+            .unwrap();
+        app.begin_settings_edit();
+        app.settings_edit.as_mut().unwrap().value = "fan edit, commentary".into();
+        app.apply_settings_edit().unwrap();
+
         assert_eq!(app.source_path, Utf8PathBuf::from("/new/source"));
         assert_eq!(app.config.paths.source, "/new/source");
         assert!(app.config.identification.use_online_providers);
         assert_eq!(app.config.providers.tmdb_api_key, "key");
         assert_eq!(app.config.ui.theme, "rainbow");
         assert_eq!(app.theme.name, "rainbow");
+        assert_eq!(app.config.identification.title_remove_segments, vec!["fan edit", "commentary"]);
     }
 
     #[test]

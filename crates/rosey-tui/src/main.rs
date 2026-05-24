@@ -129,6 +129,7 @@ fn run_app(
     loop {
         app.tick();
         drain_worker_messages(app, &mut worker_rx);
+        maybe_start_auto_plan(app, &mut worker_rx);
         terminal.draw(|f| renderer::render(f, app)).map_err(|e| anyhow::anyhow!("{e}"))?;
 
         if app.should_quit {
@@ -203,6 +204,33 @@ fn run_app(
                         KeyCode::Down => app.manual_select_provider_result(1),
                         KeyCode::Backspace => app.manual_backspace(),
                         KeyCode::Char(c) => app.manual_push_char(c),
+                        _ => {}
+                    }
+                    continue;
+                }
+
+                if app.pending_delete.is_some() {
+                    match key.code {
+                        KeyCode::Char('y') | KeyCode::Char('Y') => {
+                            match app.confirm_pending_delete() {
+                                Ok(()) => app.add_log("Delete action confirmed"),
+                                Err(err) => {
+                                    app.add_log(format!("Delete action failed: {err}"));
+                                    app.set_operation("Delete failed", err);
+                                }
+                            }
+                        }
+                        KeyCode::Delete => match app.delete_pending_plan_file_from_disk() {
+                            Ok(()) => app.add_log("Source file deleted from plan removal dialog"),
+                            Err(err) => {
+                                app.add_log(format!("Source file delete failed: {err}"));
+                                app.set_operation("Delete failed", err);
+                            }
+                        },
+                        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                            app.cancel_pending_delete();
+                            app.add_log("Delete action cancelled");
+                        }
                         _ => {}
                     }
                     continue;
@@ -306,10 +334,11 @@ fn run_app(
                         app.begin_settings_edit();
                     }
                     KeyCode::Char('s') if !app.is_busy() => {
+                        app.plan_after_scan = false;
                         worker_rx = start_scan(app);
                     }
-                    KeyCode::Char('p') if app.scan_complete && !app.is_busy() => {
-                        worker_rx = start_plan(app);
+                    KeyCode::Char('p') if !app.is_busy() => {
+                        worker_rx = request_plan(app);
                     }
                     KeyCode::Char('m') if !app.identified_items.is_empty() && !app.is_busy() => {
                         if app.conflict_policy_ask && has_destination_conflicts(app) {
@@ -367,6 +396,47 @@ fn run_app(
                     {
                         app.begin_manual_edit();
                     }
+                    KeyCode::Char('i')
+                        if app.current_screen == Screen::ScanResults && !app.is_busy() =>
+                    {
+                        match app.begin_manual_edit_from_scan() {
+                            Ok(()) => app.add_log("Manual identify opened for scanned file"),
+                            Err(err) => {
+                                app.add_log(format!("Manual identify unavailable: {err}"));
+                                app.set_operation("Identify unavailable", err);
+                            }
+                        }
+                    }
+                    KeyCode::Delete
+                        if app.current_screen == Screen::PlanPreview && !app.is_busy() =>
+                    {
+                        match app.request_remove_selected_plan_item() {
+                            Ok(()) => {
+                                if app.pending_delete.is_some() {
+                                    app.add_log("Plan item removal confirmation opened");
+                                }
+                            }
+                            Err(err) => {
+                                app.add_log(format!("Plan item removal unavailable: {err}"));
+                                app.set_operation("Remove unavailable", err);
+                            }
+                        }
+                    }
+                    KeyCode::Delete
+                        if app.current_screen == Screen::ScanResults && !app.is_busy() =>
+                    {
+                        match app.request_delete_selected_scan_directory() {
+                            Ok(()) => {
+                                if app.pending_delete.is_some() {
+                                    app.add_log("Scan directory delete confirmation opened");
+                                }
+                            }
+                            Err(err) => {
+                                app.add_log(format!("Scan directory delete unavailable: {err}"));
+                                app.set_operation("Delete unavailable", err);
+                            }
+                        }
+                    }
                     KeyCode::Char('+') | KeyCode::Char('=') if app.confidence_threshold < 100 => {
                         app.confidence_threshold += 10;
                         app.add_log(format!("Confidence threshold: {}", app.confidence_threshold));
@@ -381,10 +451,21 @@ fn run_app(
                     KeyCode::Down if app.current_screen == Screen::Settings => {
                         app.settings_next_field();
                     }
-                    KeyCode::Up if app.selected_index > 0 => {
+                    KeyCode::Up if app.current_screen == Screen::ScanResults => {
+                        app.scan_previous_item();
+                    }
+                    KeyCode::Down if app.current_screen == Screen::ScanResults => {
+                        app.scan_next_item();
+                    }
+                    KeyCode::Up
+                        if app.current_screen == Screen::PlanPreview && app.selected_index > 0 =>
+                    {
                         app.selected_index -= 1;
                     }
-                    KeyCode::Down if app.selected_index + 1 < app.filtered_items.len() => {
+                    KeyCode::Down
+                        if app.current_screen == Screen::PlanPreview
+                            && app.selected_index + 1 < app.filtered_items.len() =>
+                    {
                         app.selected_index += 1;
                     }
                     KeyCode::Char('t') => {
@@ -432,6 +513,7 @@ fn start_scan(app: &mut AppState) -> Option<Receiver<WorkerMessage>> {
     app.scan_complete = false;
     app.scan_progress = (0, 0);
     app.scan_results.clear();
+    app.selected_scan_index = 0;
     app.identified_items.clear();
     app.filtered_items.clear();
     app.transfer_queue.clear();
@@ -549,6 +631,39 @@ fn start_plan(app: &mut AppState) -> Option<Receiver<WorkerMessage>> {
     Some(rx)
 }
 
+fn request_plan(app: &mut AppState) -> Option<Receiver<WorkerMessage>> {
+    if app.scan_complete {
+        return start_plan(app);
+    }
+
+    app.plan_after_scan = true;
+    let rx = start_scan(app);
+    if rx.is_some() {
+        app.add_log("Plan requested before scan; scanning first");
+        app.set_operation(
+            "Scanning before plan",
+            format!("Walking {} before building the move plan.", app.source_path),
+        );
+    } else {
+        app.plan_after_scan = false;
+    }
+    rx
+}
+
+fn maybe_start_auto_plan(app: &mut AppState, worker_rx: &mut Option<Receiver<WorkerMessage>>) {
+    if worker_rx.is_some() || !app.plan_after_scan || !app.scan_complete || app.is_busy() {
+        return;
+    }
+
+    app.plan_after_scan = false;
+    app.add_log("Automatic scan complete; starting plan");
+    if let Some(rx) = start_plan(app) {
+        *worker_rx = Some(rx);
+    } else {
+        app.add_log("Automatic plan skipped after scan");
+    }
+}
+
 fn start_move(app: &mut AppState) -> Receiver<WorkerMessage> {
     let items: Vec<IdentifiedItem> = app.identified_items.clone();
     let conflict_policy = app.conflict_policy;
@@ -639,9 +754,11 @@ fn start_manual_provider_search(app: &mut AppState) -> Option<Receiver<WorkerMes
         return None;
     }
 
-    if app.config.providers.tmdb_api_key.is_empty() {
-        app.set_manual_search_status("TMDB API key is not configured.");
-        app.add_log("Manual identify search skipped: TMDB API key missing");
+    let has_tmdb = !app.config.providers.tmdb_api_key.trim().is_empty();
+    let has_tvdb = !app.config.providers.tvdb_api_key.trim().is_empty();
+    if !has_tmdb && !has_tvdb {
+        app.set_manual_search_status("No provider API keys are configured.");
+        app.add_log("Manual identify search skipped: no provider API keys configured");
         return None;
     }
 
@@ -681,22 +798,30 @@ fn start_manual_provider_search(app: &mut AppState) -> Option<Receiver<WorkerMes
                 return Err("Failed to initialize metadata provider cache".to_string());
             };
 
-            manager.configure_tmdb(
-                config.providers.tmdb_api_key.clone(),
-                config.providers.tmdb_language.clone(),
-                config.providers.tmdb_region.clone(),
-            );
+            if !config.providers.tmdb_api_key.trim().is_empty() {
+                manager.configure_tmdb(
+                    config.providers.tmdb_api_key.clone(),
+                    config.providers.tmdb_language.clone(),
+                    config.providers.tmdb_region.clone(),
+                );
+            }
+            if !config.providers.tvdb_api_key.trim().is_empty() {
+                manager.configure_tvdb(
+                    config.providers.tvdb_api_key.clone(),
+                    config.providers.tvdb_language.clone(),
+                );
+            }
 
-            let values = if kind == MediaKind::Episode {
-                manager.search_tv(&title, year, true).await
+            let values = if matches!(kind, MediaKind::Episode | MediaKind::Show) {
+                manager.search_tv_all(&title, year, true).await
             } else {
-                manager.search_movie(&title, year, true).await
+                manager.search_movie_all(&title, year, true).await
             };
 
             Ok(values
                 .into_iter()
                 .take(10)
-                .filter_map(|value| provider_result_from_value(value, kind))
+                .filter_map(|(provider, value)| provider_result_from_value(&provider, value, kind))
                 .collect::<Vec<_>>())
         });
 
@@ -717,7 +842,7 @@ fn start_manual_provider_search(app: &mut AppState) -> Option<Receiver<WorkerMes
 }
 
 fn has_destination_conflicts(app: &AppState) -> bool {
-    app.identified_items.iter().any(|item| item.destination.exists())
+    app.identified_items.iter().any(IdentifiedItem::destination_file_exists)
 }
 
 fn drain_worker_messages(app: &mut AppState, worker_rx: &mut Option<Receiver<WorkerMessage>>) {
@@ -740,6 +865,7 @@ fn drain_worker_messages(app: &mut AppState, worker_rx: &mut Option<Receiver<Wor
                     app.plan_running = false;
                     app.transfer_running = false;
                     app.manual_search_running = false;
+                    app.plan_after_scan = false;
                     app.scan_error = Some("Background operation ended unexpectedly".to_string());
                     app.set_operation(
                         "Operation interrupted",
@@ -775,6 +901,7 @@ fn handle_worker_message(app: &mut AppState, message: WorkerMessage) -> bool {
             app.scan_running = false;
             app.scan_complete = true;
             app.scan_progress = (total, total);
+            app.selected_scan_index = app.selected_scan_index.min(total.saturating_sub(1));
             app.set_operation(
                 "Scan complete",
                 format!(
@@ -798,6 +925,7 @@ fn handle_worker_message(app: &mut AppState, message: WorkerMessage) -> bool {
             false
         }
         WorkerMessage::PlanComplete { items, processed, elapsed } => {
+            let duplicate_count = items.iter().filter(|item| item.is_likely_duplicate()).count();
             app.identified_items = items;
             app.rebuild_filtered();
             app.selected_index = 0;
@@ -805,15 +933,17 @@ fn handle_worker_message(app: &mut AppState, message: WorkerMessage) -> bool {
             app.plan_progress = (processed, processed);
             app.set_operation(
                 "Planning complete",
-                format!(
-                    "{} items identified from {processed} files in {}",
+                plan_complete_detail(
                     app.identified_items.len(),
-                    format_duration(elapsed)
+                    processed,
+                    duplicate_count,
+                    elapsed,
                 ),
             );
             app.add_log(format!(
-                "Planning complete: {} items identified in {}",
+                "Planning complete: {} items identified, {} possible duplicate(s) in {}",
                 app.identified_items.len(),
+                duplicate_count,
                 format_duration(elapsed)
             ));
             app.current_screen = Screen::PlanPreview;
@@ -1051,25 +1181,41 @@ fn metadata_cache_dir() -> std::path::PathBuf {
 }
 
 fn provider_result_from_value(
+    provider: &str,
     value: serde_json::Value,
     requested_kind: MediaKind,
 ) -> Option<ManualProviderResult> {
-    let id = value.get("id")?.as_u64()?.to_string();
-    let title_key = if requested_kind == MediaKind::Episode { "name" } else { "title" };
-    let date_key =
-        if requested_kind == MediaKind::Episode { "first_air_date" } else { "release_date" };
+    let id = value
+        .get("id")
+        .or_else(|| value.get("tvdb_id"))
+        .or_else(|| value.get("thetvdb_id"))
+        .and_then(|id| {
+        id.as_u64().map(|id| id.to_string()).or_else(|| id.as_str().map(ToString::to_string))
+    })?;
+    let is_tv = matches!(requested_kind, MediaKind::Episode | MediaKind::Show);
     let title = value
-        .get(title_key)
+        .get(if is_tv { "name" } else { "title" })
+        .or_else(|| value.get("name"))
+        .or_else(|| value.get("title"))
         .and_then(|title| title.as_str())
         .filter(|title| !title.is_empty())?
         .to_string();
     let year = value
-        .get(date_key)
-        .and_then(|date| date.as_str())
-        .and_then(|date| date.get(0..4))
-        .and_then(|year| year.parse().ok());
+        .get(if is_tv { "first_air_date" } else { "release_date" })
+        .or_else(|| value.get("year"))
+        .and_then(|date| {
+            date.as_u64()
+                .and_then(|year| u16::try_from(year).ok())
+                .or_else(|| date.as_str()?.get(0..4)?.parse().ok())
+        });
 
-    Some(ManualProviderResult { id, kind: requested_kind, title, year })
+    Some(ManualProviderResult {
+        provider: provider.to_string(),
+        id,
+        kind: requested_kind,
+        title,
+        year,
+    })
 }
 
 fn format_duration(duration: Duration) -> String {
@@ -1078,5 +1224,95 @@ fn format_duration(duration: Duration) -> String {
         format!("{millis}ms")
     } else {
         format!("{:.1}s", millis as f64 / 1_000.0)
+    }
+}
+
+fn plan_complete_detail(
+    item_count: usize,
+    processed: usize,
+    duplicate_count: usize,
+    elapsed: Duration,
+) -> String {
+    let duplicate_suffix = if duplicate_count > 0 {
+        format!(", {duplicate_count} possible duplicate(s)")
+    } else {
+        String::new()
+    };
+    format!(
+        "{item_count} items identified from {processed} files{duplicate_suffix} in {}",
+        format_duration(elapsed)
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use camino::Utf8PathBuf;
+    use rosey_core::RoseyConfig;
+    use rosey_fs::ScanResult;
+    use std::time::Duration;
+
+    fn test_app(source_path: Utf8PathBuf) -> AppState {
+        AppState::new(
+            &RoseyConfig::default(),
+            source_path,
+            Some(Utf8PathBuf::from("/movies")),
+            Some(Utf8PathBuf::from("/tv")),
+        )
+    }
+
+    #[test]
+    fn request_plan_starts_scan_when_scan_is_not_complete() {
+        let temp_root =
+            std::env::temp_dir().join(format!("rosey-auto-plan-test-{}", std::process::id()));
+        std::fs::create_dir_all(&temp_root).unwrap();
+        let source = Utf8PathBuf::from_path_buf(temp_root.clone()).unwrap();
+        let mut app = test_app(source);
+
+        let mut worker_rx = request_plan(&mut app);
+
+        assert!(worker_rx.is_some());
+        assert!(app.plan_after_scan);
+        assert!(app.scan_running);
+        assert_eq!(app.current_screen, Screen::ScanResults);
+
+        for _ in 0..100 {
+            drain_worker_messages(&mut app, &mut worker_rx);
+            if worker_rx.is_none() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        let _ = std::fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn auto_plan_starts_after_requested_scan_completes() {
+        let mut app = test_app(Utf8PathBuf::from("/source"));
+        app.plan_after_scan = true;
+        app.scan_complete = true;
+        app.scan_results.push(ScanResult {
+            path: Utf8PathBuf::from("/source/Movie.2020.mkv"),
+            is_video: true,
+            size_bytes: 1_000,
+            error: None,
+        });
+        let mut worker_rx = None;
+
+        maybe_start_auto_plan(&mut app, &mut worker_rx);
+
+        assert!(worker_rx.is_some());
+        assert!(!app.plan_after_scan);
+        assert!(app.plan_running);
+        assert_eq!(app.current_screen, Screen::PlanPreview);
+
+        for _ in 0..100 {
+            drain_worker_messages(&mut app, &mut worker_rx);
+            if worker_rx.is_none() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
 }

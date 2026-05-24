@@ -115,6 +115,8 @@ static H264_RE: Lazy<Regex> =
 static CODEC_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)\b(x264|x265|h264|h265|hevc|xvid|divx|mp4)\b").expect("valid codec regex")
 });
+static BIT_DEPTH_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)\b\d{1,2}\s*bit\b").expect("valid bit-depth regex"));
 static AUDIO_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)\b(?:aac|dd|ddp|ac3|dts|truehd|atmos)\s*\d*\s*\.?\s*\d*\b")
         .expect("valid audio regex")
@@ -665,6 +667,7 @@ pub fn clean_title_with_year(raw: &str, extracted_year: Option<u16>) -> String {
     title = FORMAT_RE.replace_all(&title, "").to_string();
     title = H264_RE.replace_all(&title, "").to_string();
     title = CODEC_RE.replace_all(&title, "").to_string();
+    title = BIT_DEPTH_RE.replace_all(&title, "").to_string();
     title = AUDIO_RE.replace_all(&title, "").to_string();
     title = SOURCE_RE.replace_all(&title, "").to_string();
     title = RELEASE_RE.replace_all(&title, "").to_string();

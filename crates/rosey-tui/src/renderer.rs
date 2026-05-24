@@ -1,5 +1,6 @@
 use crate::app::{
-    AppState, ManualField, Screen, SettingsField, SortColumn, SortDirection, TransferState,
+    AppState, ManualField, PendingDelete, Screen, SettingsField, SortColumn, SortDirection,
+    TransferState,
 };
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -13,6 +14,11 @@ use ratatui::{
 use rosey_core::{ConfidenceBand, DoctorStatus, MediaKind};
 
 pub fn render(frame: &mut Frame, app: &AppState) {
+    if app.pending_delete.is_some() {
+        render_delete_confirmation_dialog(frame, app);
+        return;
+    }
+
     if app.show_confirmation {
         render_confirmation_dialog(frame, app);
         return;
@@ -229,27 +235,36 @@ fn render_scan_results(frame: &mut Frame, app: &AppState, area: Rect) {
         return;
     }
 
-    let table_area = if app.scan_running {
+    let (detail_area, table_area) = if app.scan_running {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(3), Constraint::Min(1)])
+            .constraints([Constraint::Length(3), Constraint::Length(5), Constraint::Min(1)])
             .split(area);
         render_activity(frame, app, chunks[0]);
-        chunks[1]
+        (chunks[1], chunks[2])
     } else {
-        area
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(5), Constraint::Min(1)])
+            .split(area);
+        (chunks[0], chunks[1])
     };
+    render_scan_detail(frame, app, detail_area);
 
     let rows: Vec<Row> = app
         .scan_results
         .iter()
-        .map(|r| {
+        .enumerate()
+        .map(|(index, r)| {
+            let row_style =
+                if index == app.selected_scan_index { app.theme.selected } else { Style::new() };
             Row::new(vec![
                 Cell::from(r.path.as_str()),
                 Cell::from(if r.is_video { "video" } else { "other" }),
                 Cell::from(rosey_fs::format_bytes(r.size_bytes)),
                 Cell::from(r.error.as_deref().unwrap_or("")),
             ])
+            .style(row_style)
         })
         .collect();
 
@@ -262,25 +277,72 @@ fn render_scan_results(frame: &mut Frame, app: &AppState, area: Rect) {
 
     let table = Table::new(rows, widths)
         .header(Row::new(vec!["Path", "Type", "Size", "Error"]).style(app.theme.header))
-        .block(Block::default().title(" Scan Results ").borders(Borders::ALL));
+        .block(
+            Block::default().title(" Scan Results (i=identify selected) ").borders(Borders::ALL),
+        );
 
     frame.render_widget(table, table_area);
 }
 
+fn render_scan_detail(frame: &mut Frame, app: &AppState, area: Rect) {
+    let lines = if let Some(result) = app.scan_results.get(app.selected_scan_index) {
+        let identify_hint = if result.is_video && result.error.is_none() {
+            "press i to identify/search providers and add or update the Move Plan"
+        } else {
+            "select a video row to identify it"
+        };
+        vec![
+            Line::from(vec![Span::styled("Selected scan result", app.theme.header)]),
+            Line::from(vec![
+                Span::styled("File: ", app.theme.dim),
+                Span::raw(result.path.as_str()),
+            ]),
+            Line::from(vec![Span::styled("Identify: ", app.theme.dim), Span::raw(identify_hint)]),
+            Line::from(vec![
+                Span::styled("Delete: ", app.theme.dim),
+                Span::raw("press Del to delete this file's containing directory"),
+            ]),
+        ]
+    } else {
+        vec![
+            Line::from(vec![Span::styled("Scan Results", app.theme.header)]),
+            Line::from("Press s to scan the source path."),
+            Line::from(vec![
+                Span::styled("Identify: ", app.theme.dim),
+                Span::raw("after scanning, select a video and press i"),
+            ]),
+            Line::from(vec![
+                Span::styled("Delete: ", app.theme.dim),
+                Span::raw("after scanning, select a video and press Del"),
+            ]),
+        ]
+    };
+
+    let detail = Paragraph::new(lines)
+        .block(Block::default().title(" Identify Source ").borders(Borders::ALL))
+        .wrap(Wrap { trim: true });
+    frame.render_widget(detail, area);
+}
+
 fn render_plan_preview(frame: &mut Frame, app: &AppState, area: Rect) {
     let constraints = if app.plan_running {
-        vec![Constraint::Length(3), Constraint::Length(3), Constraint::Min(1)]
+        vec![
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Length(7),
+            Constraint::Min(1),
+        ]
     } else {
-        vec![Constraint::Length(3), Constraint::Min(1)]
+        vec![Constraint::Length(3), Constraint::Length(7), Constraint::Min(1)]
     };
 
     let chunks =
         Layout::default().direction(Direction::Vertical).constraints(constraints).split(area);
-    let table_area = if app.plan_running {
+    let (detail_area, table_area) = if app.plan_running {
         render_activity(frame, app, chunks[1]);
-        chunks[2]
+        (chunks[2], chunks[3])
     } else {
-        chunks[1]
+        (chunks[1], chunks[2])
     };
 
     let search = Paragraph::new(if app.filter_input_active {
@@ -291,6 +353,15 @@ fn render_plan_preview(frame: &mut Frame, app: &AppState, area: Rect) {
     .block(Block::default().borders(Borders::ALL));
 
     frame.render_widget(search, chunks[0]);
+    render_plan_detail(frame, app, detail_area);
+
+    if let Some(message) = plan_empty_message(app) {
+        let empty = Paragraph::new(message)
+            .block(Block::default().title(" Move Plan ").borders(Borders::ALL))
+            .wrap(Wrap { trim: true });
+        frame.render_widget(empty, table_area);
+        return;
+    }
 
     let sort_hint = format!(
         "Sort: {} {}  t=title  y=year  c=confidence  k=kind  d=dest",
@@ -307,10 +378,15 @@ fn render_plan_preview(frame: &mut Frame, app: &AppState, area: Rect) {
         }
     );
 
+    let (visible_start, visible_end) =
+        plan_visible_window(app.selected_index, app.filtered_items.len(), table_area.height);
+
     let rows: Vec<Row> = app
         .filtered_items
         .iter()
         .enumerate()
+        .skip(visible_start)
+        .take(visible_end.saturating_sub(visible_start))
         .map(|(idx, &item_idx)| {
             let item = &app.identified_items[item_idx];
             let style = match configured_confidence_band(app, item.score.confidence) {
@@ -331,11 +407,13 @@ fn render_plan_preview(frame: &mut Frame, app: &AppState, area: Rect) {
 
             Row::new(vec![
                 Cell::from(format!("{:3}%", item.score.confidence)).style(style),
+                duplicate_indicator_cell(app, item),
                 Cell::from(kind_str),
                 Cell::from(item.media_item.title.as_deref().unwrap_or("?")),
                 Cell::from(
                     item.media_item.year.map(|y| y.to_string()).unwrap_or_else(|| "-".to_string()),
                 ),
+                Cell::from(item.media_item.source_path.as_str()),
                 Cell::from(item.destination.as_str()),
             ])
             .style(row_style)
@@ -344,23 +422,176 @@ fn render_plan_preview(frame: &mut Frame, app: &AppState, area: Rect) {
 
     let widths = [
         Constraint::Length(5),
+        Constraint::Length(5),
         Constraint::Length(7),
-        Constraint::Percentage(30),
+        Constraint::Percentage(18),
         Constraint::Length(6),
-        Constraint::Percentage(50),
+        Constraint::Percentage(32),
+        Constraint::Percentage(32),
     ];
+
+    let range_hint = if app.filtered_items.len() > visible_end.saturating_sub(visible_start) {
+        format!("rows {}-{} of {}", visible_start + 1, visible_end, app.filtered_items.len())
+    } else {
+        format!("{} items", app.filtered_items.len())
+    };
 
     let table = Table::new(rows, widths)
         .header(
-            Row::new(vec!["Conf", "Kind", "Title", "Year", "Destination"]).style(app.theme.header),
+            Row::new(vec!["Conf", "Dup", "Kind", "Title", "Year", "Source", "Destination"])
+                .style(app.theme.header),
         )
         .block(
             Block::default()
-                .title(format!(" Plan Preview ({}) - {} ", app.filtered_items.len(), sort_hint))
+                .title(format!(" Move Plan ({range_hint}) - {sort_hint} "))
                 .borders(Borders::ALL),
         );
 
     frame.render_widget(table, table_area);
+}
+
+fn plan_visible_window(selected_index: usize, total: usize, table_height: u16) -> (usize, usize) {
+    if total == 0 {
+        return (0, 0);
+    }
+
+    let visible_rows = usize::from(table_height.saturating_sub(3)).max(1).min(total);
+    let selected_index = selected_index.min(total.saturating_sub(1));
+    let mut start = selected_index.saturating_add(1).saturating_sub(visible_rows);
+
+    if start + visible_rows > total {
+        start = total.saturating_sub(visible_rows);
+    }
+
+    (start, start + visible_rows)
+}
+
+fn render_plan_detail(frame: &mut Frame, app: &AppState, area: Rect) {
+    let lines = if let Some(&item_index) = app.filtered_items.get(app.selected_index) {
+        let item = &app.identified_items[item_index];
+        let mut lines = vec![
+            Line::from(vec![
+                Span::styled("Selected move: ", app.theme.header),
+                Span::styled(item.media_item.title.as_deref().unwrap_or("?"), app.theme.strong),
+                Span::raw(format!("  ({:3}%)", item.score.confidence)),
+            ]),
+            Line::from(vec![
+                Span::styled("From: ", app.theme.dim),
+                Span::raw(item.media_item.source_path.as_str()),
+            ]),
+            Line::from(vec![
+                Span::styled("To:   ", app.theme.dim),
+                Span::raw(item.destination.as_str()),
+            ]),
+        ];
+        if let Some(line) = duplicate_detail_line(app, item) {
+            lines.push(line);
+        }
+        lines.extend([Line::from(vec![
+            Span::styled("Move: ", app.theme.dim),
+            Span::raw("press m to execute this plan; Del removes this item from the plan"),
+        ])]);
+        lines
+    } else {
+        vec![
+            Line::from(vec![Span::styled("Move Plan", app.theme.header)]),
+            Line::from(vec![Span::raw(plan_state_summary(app))]),
+            Line::from(vec![
+                Span::styled("Keys: ", app.theme.dim),
+                Span::raw("s scan, p plan, m move, / filter"),
+            ]),
+        ]
+    };
+
+    let detail = Paragraph::new(lines)
+        .block(Block::default().title(" Source -> Destination ").borders(Borders::ALL))
+        .wrap(Wrap { trim: true });
+    frame.render_widget(detail, area);
+}
+
+fn duplicate_indicator_cell<'a>(app: &AppState, item: &crate::app::IdentifiedItem) -> Cell<'a> {
+    match item.duplicate_indicator() {
+        Some("FILE") => Cell::from("FILE").style(app.theme.error),
+        Some("DIR") => Cell::from("DIR").style(app.theme.warn),
+        _ => Cell::from(""),
+    }
+}
+
+fn duplicate_detail_line<'a>(
+    app: &AppState,
+    item: &crate::app::IdentifiedItem,
+) -> Option<Line<'a>> {
+    if item.destination_file_exists() {
+        return Some(Line::from(vec![
+            Span::styled("Duplicate: ", app.theme.warn),
+            Span::styled("destination file already exists", app.theme.error),
+        ]));
+    }
+
+    if item.destination_directory_exists() {
+        let directory = item.destination_directory().map(|path| path.as_str()).unwrap_or("");
+        return Some(Line::from(vec![
+            Span::styled("Duplicate: ", app.theme.warn),
+            Span::raw("likely - destination directory already exists: "),
+            Span::styled(directory.to_string(), app.theme.dim),
+        ]));
+    }
+
+    None
+}
+
+fn plan_empty_message(app: &AppState) -> Option<String> {
+    if app.plan_running {
+        return Some("Building the move plan. Identified files will appear here.".to_string());
+    }
+
+    if app.identified_items.is_empty() {
+        let scanned_videos = app.scan_results.iter().filter(|result| result.is_video).count();
+        if scanned_videos == 0 {
+            return Some(
+                "No scanned video files yet. Press s to scan the source path.".to_string(),
+            );
+        }
+
+        if app.plan_progress.1 == 0 {
+            return Some(format!(
+                "Scan complete: {scanned_videos} video file(s) found. Press p to build the move plan."
+            ));
+        }
+
+        return Some(format!(
+            "Plan complete: 0 of {} scanned video file(s) met the yellow confidence threshold ({}%). Lower the threshold in Settings or press +/- here, then press p again.",
+            app.plan_progress.1,
+            app.confidence_threshold
+        ));
+    }
+
+    if app.filtered_items.is_empty() {
+        return Some(format!(
+            "No planned items match filter '{}'. Press Esc to clear the filter.",
+            app.search_query
+        ));
+    }
+
+    None
+}
+
+fn plan_state_summary(app: &AppState) -> String {
+    let scanned_videos = app.scan_results.iter().filter(|result| result.is_video).count();
+    if app.plan_running {
+        return format!(
+            "Planning in progress: {}/{} scanned video file(s) processed.",
+            app.plan_progress.0, app.plan_progress.1
+        );
+    }
+    if app.identified_items.is_empty() && app.plan_progress.1 == 0 {
+        return format!("{scanned_videos} scanned video file(s). Press p to build the move plan.");
+    }
+    format!(
+        "{} planned move(s) from {} scanned video file(s).",
+        app.identified_items.len(),
+        scanned_videos
+    )
 }
 
 fn render_transfer_queue(frame: &mut Frame, app: &AppState, area: Rect) {
@@ -626,7 +857,7 @@ fn render_help(frame: &mut Frame, app: &AppState, area: Rect) {
         Line::from(vec![Span::styled("s  ", app.theme.key), Span::raw("Scan source directory")]),
         Line::from(vec![
             Span::styled("p  ", app.theme.key),
-            Span::raw("Plan (identify + score all scanned files)"),
+            Span::raw("Plan; scans first when no scan is complete"),
         ]),
         Line::from(vec![
             Span::styled("m  ", app.theme.key),
@@ -643,11 +874,15 @@ fn render_help(frame: &mut Frame, app: &AppState, area: Rect) {
         ]),
         Line::from(vec![
             Span::styled("i  ", app.theme.key),
-            Span::raw("Manually identify selected plan item"),
+            Span::raw("Identify selected scan result or planned move"),
+        ]),
+        Line::from(vec![
+            Span::styled("Del", app.theme.key),
+            Span::raw("Remove selected planned move or delete selected scan directory"),
         ]),
         Line::from(vec![
             Span::styled("F5 ", app.theme.key),
-            Span::raw("Search online providers from identify overlay"),
+            Span::raw("Search providers from manual identify"),
         ]),
         Line::from(vec![
             Span::styled("r  ", app.theme.key),
@@ -682,14 +917,75 @@ fn render_help(frame: &mut Frame, app: &AppState, area: Rect) {
     frame.render_widget(help, area);
 }
 
+fn render_delete_confirmation_dialog(frame: &mut Frame, app: &AppState) {
+    let area = frame.area();
+    let dialog_area = centered_rect(72, 46, area);
+
+    let lines = match app.pending_delete.as_ref() {
+        Some(PendingDelete::PlanItem { item_index }) => {
+            let item = app.identified_items.get(*item_index);
+            let title = item
+                .and_then(|item| item.media_item.title.as_deref())
+                .unwrap_or("selected planned move");
+            let source = item.map(|item| item.media_item.source_path.as_str()).unwrap_or("");
+            let destination = item.map(|item| item.destination.as_str()).unwrap_or("");
+            vec![
+                Line::from(vec![Span::styled("Confirm Plan Removal", app.theme.danger_bold)]),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("Action: ", app.theme.dim),
+                    Span::raw("Remove this item from the Move Plan."),
+                ]),
+                Line::from(vec![Span::styled("Title:  ", app.theme.dim), Span::raw(title)]),
+                Line::from(vec![Span::styled("Source: ", app.theme.dim), Span::raw(source)]),
+                Line::from(vec![Span::styled("Dest:   ", app.theme.dim), Span::raw(destination)]),
+                Line::from(""),
+                Line::from(vec![Span::styled("y removes only from the plan.", app.theme.ok)]),
+                Line::from(vec![Span::styled(
+                    "Del deletes the source file from disk and removes it from the plan.",
+                    app.theme.error,
+                )]),
+                Line::from(""),
+                Line::from(vec![Span::styled(
+                    "y = remove    Del = delete file    n/Esc = cancel",
+                    app.theme.key,
+                )]),
+            ]
+        }
+        Some(PendingDelete::ScanDirectory { directory }) => vec![
+            Line::from(vec![Span::styled("Confirm Directory Delete", app.theme.danger_bold)]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("Action: ", app.theme.dim),
+                Span::styled("Delete this directory from disk.", app.theme.error),
+            ]),
+            Line::from(vec![Span::styled("Path:   ", app.theme.dim), Span::raw(directory.as_str())]),
+            Line::from(""),
+            Line::from(vec![Span::styled(
+                "This also removes matching Scan Results and planned moves from the current session.",
+                app.theme.warn,
+            )]),
+            Line::from(""),
+            Line::from(vec![Span::styled("y = delete    n/Esc = cancel", app.theme.key)]),
+        ],
+        None => Vec::new(),
+    };
+
+    let dialog = Paragraph::new(lines)
+        .block(Block::default().borders(Borders::ALL).border_type(BorderType::Double))
+        .wrap(Wrap { trim: true });
+
+    frame.render_widget(dialog, dialog_area);
+}
+
 fn render_confirmation_dialog(frame: &mut Frame, app: &AppState) {
     let area = frame.area();
-    let dialog_area = centered_rect(60, 20, area);
+    let dialog_area = centered_rect(72, 50, area);
 
     let mode_msg = if app.dry_run {
         "This is a DRY-RUN. No files will be moved."
     } else {
-        "LIVE MODE: Files WILL be moved/destroyed."
+        "LIVE MODE: pressing y will move files now."
     };
 
     let mode_style = if app.dry_run { app.theme.warn } else { app.theme.error };
@@ -699,17 +995,19 @@ fn render_confirmation_dialog(frame: &mut Frame, app: &AppState) {
         Line::from(vec![Span::styled("⚠  Confirm Move Operation  ⚠", app.theme.danger_bold)]),
         Line::from(""),
         Line::from(vec![Span::styled(mode_msg, mode_style)]),
+        Line::from(vec![Span::raw("Reason: dry-run is off; live moves need confirmation.")]),
         Line::from(""),
         Line::from(vec![Span::raw(format!("Source: {}", app.source_path))]),
         Line::from(vec![Span::raw(format!("Items to move: {}", app.identified_items.len()))]),
         Line::from(vec![Span::raw(format!("Conflict policy: {}", app.get_conflict_policy_name()))]),
         Line::from(""),
-        Line::from(vec![Span::styled("Press [y] to confirm or [n] to cancel", app.theme.key)]),
+        Line::from(vec![Span::styled("y = move now    n/Esc = cancel", app.theme.key)]),
     ];
 
     let confirm = Paragraph::new(lines)
         .block(Block::default().borders(Borders::ALL).border_type(BorderType::Double))
-        .centered();
+        .centered()
+        .wrap(Wrap { trim: true });
 
     frame.render_widget(Clear, frame.area());
     frame.render_widget(confirm, dialog_area);
@@ -735,15 +1033,21 @@ fn render_manual_identify_dialog(frame: &mut Frame, app: &AppState) {
     let mut lines = vec![
         Line::from(""),
         Line::from(vec![Span::styled("Manual Identification", app.theme.header)]),
+        Line::from(vec![
+            Span::styled("Workflow: ", app.theme.dim),
+            Span::raw("edit criteria, search providers, choose result, apply"),
+        ]),
         Line::from(""),
         Line::from(vec![
             Span::styled("Kind:  ", kind_style),
             Span::raw(kind),
-            Span::styled("   m", app.theme.key),
+            Span::styled(" [m]", app.theme.key),
             Span::raw(" movie "),
-            Span::styled("e", app.theme.key),
+            Span::styled("[e]", app.theme.key),
             Span::raw(" episode "),
-            Span::styled("u", app.theme.key),
+            Span::styled("[s]", app.theme.key),
+            Span::raw(" show "),
+            Span::styled("[u]", app.theme.key),
             Span::raw(" unknown"),
         ]),
         Line::from(vec![
@@ -769,7 +1073,7 @@ fn render_manual_identify_dialog(frame: &mut Frame, app: &AppState) {
             let style = if index == edit.provider_index { app.theme.strong } else { app.theme.dim };
             let year = result.year.map(|year| year.to_string()).unwrap_or_else(|| "N/A".into());
             lines.push(Line::from(vec![Span::styled(
-                format!("{marker} {} ({year}) [tmdbid-{}]", result.title, result.id),
+                format!("{marker} {} ({year}) [{}-{}]", result.title, result.provider, result.id),
                 style,
             )]));
         }
@@ -779,15 +1083,15 @@ fn render_manual_identify_dialog(frame: &mut Frame, app: &AppState) {
         Line::from(""),
         Line::from(vec![
             Span::styled("Tab", app.theme.key),
-            Span::raw(" field   "),
+            Span::raw(" edit field   "),
             Span::styled("F5", app.theme.key),
-            Span::raw(" search   "),
+            Span::raw(" search providers   "),
             Span::styled("↑/↓", app.theme.key),
             Span::raw(" result   "),
         ]),
         Line::from(vec![
             Span::styled("Enter", app.theme.key),
-            Span::raw(" apply   "),
+            Span::raw(" apply selected   "),
             Span::styled("Esc", app.theme.key),
             Span::raw(" cancel"),
         ]),
@@ -839,9 +1143,9 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
 
 fn render_status_bar(frame: &mut Frame, app: &AppState, area: Rect) {
     let left = format!(
-        " {} | {} items | {} | {} | {}",
+        " {} | {} | {} | {} | {}",
         app.current_screen.title(),
-        app.identified_items.len(),
+        status_metric(app),
         if app.dry_run { "DRY-RUN" } else { "LIVE" },
         app.get_conflict_policy_name(),
         app.operation_status
@@ -866,6 +1170,60 @@ fn render_status_bar(frame: &mut Frame, app: &AppState, area: Rect) {
 
     let bar = Paragraph::new(status);
     frame.render_widget(bar, area);
+}
+
+fn status_metric(app: &AppState) -> String {
+    match app.current_screen {
+        Screen::ScanResults => {
+            let scanned = app.scan_results.len();
+            let videos = app.scan_results.iter().filter(|result| result.is_video).count();
+            let errors = app.scan_results.iter().filter(|result| result.error.is_some()).count();
+            let video_label = count_label(videos, "video", "videos");
+            if errors > 0 {
+                format!(
+                    "{scanned} scanned, {video_label}, {}",
+                    count_label(errors, "error", "errors")
+                )
+            } else {
+                format!("{scanned} scanned, {video_label}")
+            }
+        }
+        Screen::PlanPreview => {
+            let planned = app.identified_items.len();
+            let duplicates =
+                app.identified_items.iter().filter(|item| item.is_likely_duplicate()).count();
+            if duplicates > 0 {
+                format!(
+                    "{} planned, {}",
+                    planned,
+                    count_label(duplicates, "possible duplicate", "possible duplicates")
+                )
+            } else {
+                format!("{} planned", planned)
+            }
+        }
+        Screen::TransferQueue => {
+            format!("{}/{} processed", app.transfer_progress.0, app.transfer_queue.len())
+        }
+        Screen::LogsRecovery => format!("{} logs", app.log_messages.len()),
+        Screen::Settings => format!("{} settings", SettingsField::all().len()),
+        Screen::Doctor => {
+            format!(
+                "{} errors, {} warnings",
+                app.doctor_report.errors(),
+                app.doctor_report.warnings()
+            )
+        }
+        Screen::Dashboard | Screen::Help => format!("{} planned", app.identified_items.len()),
+    }
+}
+
+fn count_label(count: usize, singular: &str, plural: &str) -> String {
+    if count == 1 {
+        format!("{count} {singular}")
+    } else {
+        format!("{count} {plural}")
+    }
 }
 
 fn active_progress_ratio(app: &AppState) -> Option<f64> {
@@ -936,6 +1294,7 @@ mod tests {
     use camino::Utf8PathBuf;
     use ratatui::{backend::TestBackend, Terminal};
     use rosey_core::{MediaItem, Score};
+    use rosey_fs::ScanResult;
 
     fn render_text(app: &AppState) -> String {
         let backend = TestBackend::new(100, 32);
@@ -982,6 +1341,121 @@ mod tests {
     }
 
     #[test]
+    fn scan_results_explain_identify_action() {
+        let mut app = test_app();
+        app.current_screen = Screen::ScanResults;
+        app.scan_results.push(ScanResult {
+            path: Utf8PathBuf::from("/source/Movie.mkv"),
+            is_video: true,
+            size_bytes: 1_000,
+            error: None,
+        });
+
+        let text = render_text(&app);
+
+        assert!(text.contains("Identify Source"));
+        assert!(text.contains("press i to identify"));
+        assert!(text.contains("i=identify"));
+    }
+
+    #[test]
+    fn scan_status_bar_reports_scan_counts() {
+        let mut app = test_app();
+        app.current_screen = Screen::ScanResults;
+        app.scan_results.push(ScanResult {
+            path: Utf8PathBuf::from("/source/Movie.mkv"),
+            is_video: true,
+            size_bytes: 1_000,
+            error: None,
+        });
+        app.scan_results.push(ScanResult {
+            path: Utf8PathBuf::from("/source/Broken.mkv"),
+            is_video: false,
+            size_bytes: 0,
+            error: Some("denied".into()),
+        });
+
+        let text = render_text(&app);
+
+        assert!(text.contains("Scan Results | 2 scanned, 1 video, 1 error"));
+    }
+
+    #[test]
+    fn live_move_confirmation_explains_why_and_next_keys() {
+        let mut app = test_app();
+        app.dry_run = false;
+        app.show_confirmation = true;
+        app.identified_items.push(IdentifiedItem {
+            media_item: MediaItem {
+                kind: MediaKind::Movie,
+                source_path: Utf8PathBuf::from("/source/Movie.mkv"),
+                title: Some("Movie".into()),
+                year: Some(2020),
+                season: None,
+                episodes: Vec::new(),
+                part: None,
+                date: None,
+                sidecars: Vec::new(),
+                nfo: Default::default(),
+            },
+            score: Score { confidence: 80, reasons: Vec::new() },
+            destination: Utf8PathBuf::from("/movies/Movie (2020)/Movie.mkv"),
+        });
+
+        let text = render_text(&app);
+
+        assert!(text.contains("LIVE MODE"));
+        assert!(text.contains("dry-run is off"));
+        assert!(text.contains("Items to move: 1"));
+        assert!(text.contains("y = move now"));
+        assert!(text.contains("n/Esc = cancel"));
+    }
+
+    #[test]
+    fn delete_confirmation_explains_plan_removal() {
+        let mut app = test_app();
+        app.pending_delete = Some(PendingDelete::PlanItem { item_index: 0 });
+        app.identified_items.push(IdentifiedItem {
+            media_item: MediaItem {
+                kind: MediaKind::Movie,
+                source_path: Utf8PathBuf::from("/source/Movie.mkv"),
+                title: Some("Movie".into()),
+                year: Some(2020),
+                season: None,
+                episodes: Vec::new(),
+                part: None,
+                date: None,
+                sidecars: Vec::new(),
+                nfo: Default::default(),
+            },
+            score: Score { confidence: 80, reasons: Vec::new() },
+            destination: Utf8PathBuf::from("/movies/Movie (2020)/Movie.mkv"),
+        });
+
+        let text = render_text(&app);
+
+        assert!(text.contains("Confirm Plan Removal"));
+        assert!(text.contains("y removes only from the plan"));
+        assert!(text.contains("Del deletes the source file"));
+        assert!(text.contains("y = remove"));
+        assert!(text.contains("Del = delete file"));
+    }
+
+    #[test]
+    fn delete_confirmation_explains_scan_directory_delete() {
+        let mut app = test_app();
+        app.pending_delete = Some(PendingDelete::ScanDirectory {
+            directory: Utf8PathBuf::from("/source/Movie (2020)"),
+        });
+
+        let text = render_text(&app);
+
+        assert!(text.contains("Confirm Directory Delete"));
+        assert!(text.contains("Delete this directory from disk"));
+        assert!(text.contains("y = delete"));
+    }
+
+    #[test]
     fn doctor_render_smoke() {
         let mut app = test_app();
         app.current_screen = Screen::Doctor;
@@ -990,6 +1464,132 @@ mod tests {
 
         assert!(text.contains("Doctor"));
         assert!(text.contains("Overall"));
+    }
+
+    #[test]
+    fn plan_preview_prompts_to_build_plan_after_scan() {
+        let mut app = test_app();
+        app.current_screen = Screen::PlanPreview;
+        app.scan_results.push(ScanResult {
+            path: Utf8PathBuf::from("/source/Movie.mkv"),
+            is_video: true,
+            size_bytes: 1_000,
+            error: None,
+        });
+
+        let text = render_text(&app);
+
+        assert!(text.contains("Source -> Destination"));
+        assert!(text.contains("Press p to build"));
+    }
+
+    #[test]
+    fn plan_preview_shows_selected_source_and_destination() {
+        let mut app = test_app();
+        app.current_screen = Screen::PlanPreview;
+        app.identified_items.push(IdentifiedItem {
+            media_item: MediaItem {
+                kind: MediaKind::Movie,
+                source_path: Utf8PathBuf::from("/source/Movie.mkv"),
+                title: Some("Movie".into()),
+                year: Some(2020),
+                season: None,
+                episodes: Vec::new(),
+                part: None,
+                date: None,
+                sidecars: Vec::new(),
+                nfo: Default::default(),
+            },
+            score: Score { confidence: 90, reasons: Vec::new() },
+            destination: Utf8PathBuf::from("/movies/Movie (2020)/Movie.mkv"),
+        });
+        app.rebuild_filtered();
+
+        let text = render_text(&app);
+
+        assert!(text.contains("From:"));
+        assert!(text.contains("To:"));
+        assert!(text.contains("Source"));
+        assert!(text.contains("Destination"));
+        assert!(text.contains("/source/Movie.mkv"));
+    }
+
+    #[test]
+    fn plan_preview_scrolls_table_to_selected_item() {
+        let mut app = test_app();
+        app.current_screen = Screen::PlanPreview;
+        for index in 0..25 {
+            let title = format!("Movie {index:02}");
+            app.identified_items.push(IdentifiedItem {
+                media_item: MediaItem {
+                    kind: MediaKind::Movie,
+                    source_path: Utf8PathBuf::from(format!("/source/{title}.mkv")),
+                    title: Some(title.clone()),
+                    year: Some(2020),
+                    season: None,
+                    episodes: Vec::new(),
+                    part: None,
+                    date: None,
+                    sidecars: Vec::new(),
+                    nfo: Default::default(),
+                },
+                score: Score { confidence: 80, reasons: Vec::new() },
+                destination: Utf8PathBuf::from(format!("/movies/{title} (2020)/{title}.mkv")),
+            });
+        }
+        app.rebuild_filtered();
+        app.selected_index = 20;
+
+        let text = render_text(&app);
+
+        assert!(text.contains("Movie 20"));
+        assert!(text.contains("rows"));
+        assert!(!text.contains("Movie 00"), "{text}");
+    }
+
+    #[test]
+    fn plan_visible_window_keeps_selection_visible() {
+        assert_eq!(plan_visible_window(0, 25, 14), (0, 11));
+        assert_eq!(plan_visible_window(20, 25, 14), (10, 21));
+        assert_eq!(plan_visible_window(24, 25, 14), (14, 25));
+    }
+
+    #[test]
+    fn plan_preview_flags_existing_destination_directory_as_duplicate() {
+        let temp_root = std::env::temp_dir()
+            .join(format!("rosey-duplicate-render-test-{}", std::process::id()));
+        let duplicate_dir = temp_root.join("Movie (2020)");
+        std::fs::create_dir_all(&duplicate_dir).unwrap();
+        let duplicate_dir = Utf8PathBuf::from_path_buf(duplicate_dir).unwrap();
+
+        let mut app = test_app();
+        app.current_screen = Screen::PlanPreview;
+        app.identified_items.push(IdentifiedItem {
+            media_item: MediaItem {
+                kind: MediaKind::Movie,
+                source_path: Utf8PathBuf::from("/source/Movie.mkv"),
+                title: Some("Movie".into()),
+                year: Some(2020),
+                season: None,
+                episodes: Vec::new(),
+                part: None,
+                date: None,
+                sidecars: Vec::new(),
+                nfo: Default::default(),
+            },
+            score: Score { confidence: 90, reasons: Vec::new() },
+            destination: duplicate_dir.join("Movie (2020).mkv"),
+        });
+        app.rebuild_filtered();
+
+        let text = render_text(&app);
+
+        assert!(text.contains("Dup"));
+        assert!(text.contains("DIR"), "{text}");
+        assert!(text.contains("possible duplicate"));
+        assert!(text.contains("destination directory already exists"));
+
+        let _ = std::fs::remove_dir_all(temp_root);
     }
 
     #[test]
@@ -1018,6 +1618,18 @@ mod tests {
         let text = render_text(&app);
 
         assert!(text.contains("Manual Identification"));
-        assert!(text.contains("F5"));
+        assert!(text.contains("Workflow:"));
+        assert!(text.contains("edit criteria, search providers"));
+        assert!(text.contains("apply"));
+    }
+
+    #[test]
+    fn help_identify_instructions_are_clear() {
+        let mut app = test_app();
+        app.current_screen = Screen::Help;
+        let text = render_text(&app);
+
+        assert!(text.contains("Identify selected scan result or planned move"));
+        assert!(text.contains("Search providers from manual identify"));
     }
 }
