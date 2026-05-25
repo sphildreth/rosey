@@ -2,9 +2,9 @@ use anyhow::Result;
 use camino::Utf8PathBuf;
 use clap::{Parser, Subcommand, ValueEnum};
 use rosey_core::{
-    load_config, run_doctor, save_config as save_rosey_config, score_identification_result,
-    ConfidenceBand, ConfidenceThresholds, ConflictPolicy, DoctorReport, DoctorStatus,
-    IdentifyOptions, MediaItem, MediaKind, RoseyConfig, Score,
+    init_fallback_tracing, init_tracing, load_config, run_doctor, save_config as save_rosey_config,
+    score_identification_result, ConfidenceBand, ConfidenceThresholds, ConflictPolicy,
+    DoctorReport, DoctorStatus, IdentifyOptions, MediaItem, MediaKind, RoseyConfig, Score,
 };
 use rosey_fs::{format_bytes, move_with_sidecars, Scanner};
 use rosey_metadata::identify_file_with_metadata;
@@ -112,10 +112,18 @@ struct RunOutput {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt().with_env_filter("warn").init();
-
     let cli = Cli::parse();
     let config = load_config();
+    if let Err(err) = init_tracing(&config) {
+        eprintln!("Warning: failed to initialize Rosey logging: {err}");
+        init_fallback_tracing();
+    }
+
+    tracing::info!(
+        config_path = %rosey_core::config_path().display(),
+        command = ?cli.command,
+        "rosey cli starting"
+    );
 
     match cli.command {
         Commands::Scan { root, json, max_workers } => {
@@ -124,8 +132,25 @@ async fn main() -> Result<()> {
                 std::process::exit(2);
             };
             let max_workers = resolve_max_workers(max_workers, &config);
+            tracing::info!(
+                root = %root,
+                max_workers,
+                follow_symlinks = config.scanning.follow_symlinks,
+                json,
+                "cli scan started"
+            );
             let scanner = Scanner::new(max_workers, config.scanning.follow_symlinks);
             let results = scanner.scan(&root);
+            tracing::info!(root = %root, results = results.len(), "cli scan complete");
+            for result in &results {
+                tracing::debug!(
+                    path = %result.path,
+                    is_video = result.is_video,
+                    size_bytes = result.size_bytes,
+                    error = result.error.as_deref().unwrap_or(""),
+                    "cli scan result"
+                );
+            }
             if json {
                 println!("{}", serde_json::to_string_pretty(&results)?);
             } else {
@@ -136,10 +161,19 @@ async fn main() -> Result<()> {
         }
 
         Commands::Identify { path, json } => {
+            tracing::info!(path = %path, json, "cli identify started");
             let ident =
                 identify_file_with_metadata(&path, &config, IdentifyOptions::default()).await;
             let item = ident.item;
             let nfo_path = rosey_core::find_nfo_for_file(&path);
+            tracing::debug!(
+                path = %path,
+                kind = ?item.kind,
+                title = item.title.as_deref().unwrap_or(""),
+                year = item.year,
+                errors = ident.errors.len(),
+                "cli identify complete"
+            );
 
             let output = IdentifyOutput {
                 path: path.clone(),
@@ -166,7 +200,14 @@ async fn main() -> Result<()> {
         }
 
         Commands::Doctor { json } => {
+            tracing::info!(json, "cli doctor started");
             let report = run_doctor(&config);
+            tracing::info!(
+                status = ?report.overall,
+                errors = report.errors(),
+                warnings = report.warnings(),
+                "cli doctor complete"
+            );
             if json {
                 println!("{}", serde_json::to_string_pretty(&report)?);
             } else {
@@ -216,16 +257,32 @@ async fn main() -> Result<()> {
             }
 
             if !source.exists() {
+                tracing::error!(source = %source, "cli run source path does not exist");
                 eprintln!("Error: Source directory does not exist: {source}");
                 std::process::exit(1);
             }
 
+            tracing::info!(
+                source = %source,
+                movies_target = movies_target.as_ref().map(|p| p.as_str()).unwrap_or(""),
+                tv_target = tv_target.as_ref().map(|p| p.as_str()).unwrap_or(""),
+                dry_run = actually_dry_run,
+                max_workers,
+                confidence,
+                conflict_policy = ?conflict_policy,
+                json,
+                "cli run started"
+            );
+
             let scanner = Scanner::new(max_workers, config.scanning.follow_symlinks);
             let scan_results = scanner.scan(&source);
+            tracing::debug!(source = %source, results = scan_results.len(), "cli run scan complete");
             let video_files: Vec<_> =
                 scan_results.into_iter().filter(|r| r.is_video && r.error.is_none()).collect();
+            tracing::debug!(video_files = video_files.len(), "cli run filtered scan results");
 
             if video_files.is_empty() {
+                tracing::info!(source = %source, "cli run found no video files");
                 println!("No video files found in {source}");
                 return Ok(());
             }
@@ -241,8 +298,24 @@ async fn main() -> Result<()> {
                 .await;
                 let score = score_identification_result(&ident);
                 let item = ident.item;
+                tracing::debug!(
+                    source = %scan_result.path,
+                    kind = ?item.kind,
+                    title = item.title.as_deref().unwrap_or(""),
+                    year = item.year,
+                    confidence = score.confidence,
+                    threshold = confidence,
+                    errors = ident.errors.len(),
+                    "cli run identified candidate"
+                );
 
                 if score.confidence < confidence {
+                    tracing::debug!(
+                        source = %scan_result.path,
+                        confidence = score.confidence,
+                        threshold = confidence,
+                        "cli run skipped candidate below confidence threshold"
+                    );
                     continue;
                 }
 
@@ -250,6 +323,12 @@ async fn main() -> Result<()> {
                     &item,
                     movies_target.as_ref().map(|p| p.as_str()).unwrap_or(""),
                     tv_target.as_ref().map(|p| p.as_str()).unwrap_or(""),
+                );
+                tracing::debug!(
+                    source = %scan_result.path,
+                    destination = %destination,
+                    confidence = score.confidence,
+                    "cli run planned candidate"
                 );
 
                 results.push(RunResultItem { item, score, destination });
@@ -290,6 +369,7 @@ async fn main() -> Result<()> {
             }
 
             if actually_dry_run {
+                tracing::info!(planned = results.len(), "cli run dry-run complete");
                 println!("DRY-RUN mode — no files were moved");
             } else {
                 let mut moved = 0;
@@ -301,6 +381,17 @@ async fn main() -> Result<()> {
                         &result.destination,
                         conflict_policy,
                         false,
+                    );
+                    tracing::debug!(
+                        source = %result.item.source_path,
+                        destination = %result.destination,
+                        success = move_result.success,
+                        moved = move_result.moved.len(),
+                        skipped = move_result.skipped.len(),
+                        replaced = move_result.replaced.len(),
+                        kept_both = move_result.kept_both.len(),
+                        errors = move_result.errors.len(),
+                        "cli run move result"
                     );
 
                     if move_result.success {
@@ -318,6 +409,12 @@ async fn main() -> Result<()> {
                     "Move summary: {moved}/{} succeeded; {} errors",
                     results.len(),
                     errors.len()
+                );
+                tracing::info!(
+                    moved,
+                    planned = results.len(),
+                    errors = errors.len(),
+                    "cli run move complete"
                 );
             }
         }

@@ -382,7 +382,9 @@ impl AppState {
     }
 
     pub fn add_log(&mut self, msg: impl Into<String>) {
-        self.log_messages.push(msg.into());
+        let msg = msg.into();
+        tracing::debug!(message = %msg, "tui event");
+        self.log_messages.push(msg);
         if self.log_messages.len() > 1000 {
             self.log_messages.remove(0);
         }
@@ -396,8 +398,11 @@ impl AppState {
     }
 
     pub fn set_operation(&mut self, status: impl Into<String>, detail: impl Into<String>) {
-        self.operation_status = status.into();
-        self.operation_detail = detail.into();
+        let status = status.into();
+        let detail = detail.into();
+        tracing::debug!(status = %status, detail = %detail, "operation status updated");
+        self.operation_status = status;
+        self.operation_detail = detail;
     }
 
     pub fn refresh_doctor(&mut self) {

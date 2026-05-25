@@ -6,9 +6,9 @@ use std::fs;
 ///
 /// Mirrors Python `_discover_companion_files`:
 /// - subtitle_exts = {".srt", ".ass", ".vtt"}
-/// - image_exts = {".jpg", ".png", ".jpeg"}
+/// - image_exts = {".png"}
 const COMPANION_SUBTITLE_EXTS: &[&str] = &["srt", "ass", "vtt"];
-const COMPANION_IMAGE_EXTS: &[&str] = &["jpg", "png", "jpeg"];
+const COMPANION_IMAGE_EXTS: &[&str] = &["png"];
 
 /// Subtitle folder names matched case-insensitively.
 const SUBTITLE_FOLDER_NAMES: &[&str] = &["subs", "sub", "subtitles", "subtitle"];

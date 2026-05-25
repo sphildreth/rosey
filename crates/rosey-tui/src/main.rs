@@ -11,8 +11,8 @@ use crossterm::{
 };
 use ratatui::backend::CrosstermBackend;
 use rosey_core::{
-    config_path, load_config, plan_path, save_config, score_identification_result, IdentifyOptions,
-    MediaKind,
+    config_path, init_fallback_tracing, init_tracing, load_config, plan_path, save_config,
+    score_identification_result, IdentifyOptions, MediaKind,
 };
 use rosey_fs::{
     move_with_sidecars_journaled, scan_with_progress, OperationJournal, ScanOptions, ScanResult,
@@ -31,6 +31,11 @@ use app::{
 
 fn main() -> Result<()> {
     let config = load_config();
+    if let Err(err) = init_tracing(&config) {
+        eprintln!("Warning: failed to initialize Rosey logging: {err}");
+        init_fallback_tracing();
+    }
+
     let mut args = std::env::args().skip(1);
     let source_arg = args.next().map(Utf8PathBuf::from);
     let movies_arg = args.next().map(Utf8PathBuf::from);
@@ -40,6 +45,17 @@ fn main() -> Result<()> {
         resolve_path(source_arg, &config.paths.source).unwrap_or_else(|| Utf8PathBuf::from(""));
     let movies_target = resolve_path(movies_arg, &config.paths.movies);
     let tv_target = resolve_path(tv_arg, &config.paths.tv);
+
+    tracing::info!(
+        config_path = %config_path().display(),
+        source = %source_path,
+        movies_target = movies_target.as_ref().map(|p| p.as_str()).unwrap_or(""),
+        tv_target = tv_target.as_ref().map(|p| p.as_str()).unwrap_or(""),
+        dry_run = config.behavior.dry_run,
+        conflict_policy = %config.behavior.conflict_policy,
+        theme = %config.ui.theme,
+        "rosey tui starting"
+    );
 
     let mut app = AppState::new(&config, source_path, movies_target, tv_target);
 
@@ -522,6 +538,12 @@ fn start_scan(app: &mut AppState) -> Option<Receiver<WorkerMessage>> {
     app.add_log(format!("Scanning: {}", app.source_path));
     app.set_operation("Scanning", format!("Walking {}", app.source_path));
     app.current_screen = Screen::ScanResults;
+    tracing::debug!(
+        source = %app.source_path,
+        max_workers = app.max_workers,
+        follow_symlinks = app.follow_symlinks,
+        "scan requested"
+    );
 
     let source = app.source_path.clone();
     let max_workers = app.max_workers;
@@ -530,6 +552,7 @@ fn start_scan(app: &mut AppState) -> Option<Receiver<WorkerMessage>> {
 
     thread::spawn(move || {
         let started = Instant::now();
+        tracing::debug!(source = %source, max_workers, follow_symlinks, "scan worker started");
         let progress_tx = tx.clone();
         let mut scanned = 0;
         let mut video_count = 0;
@@ -545,6 +568,16 @@ fn start_scan(app: &mut AppState) -> Option<Receiver<WorkerMessage>> {
                 if result.error.is_some() {
                     error_count += 1;
                 }
+                tracing::debug!(
+                    path = %result.path,
+                    is_video = result.is_video,
+                    size_bytes = result.size_bytes,
+                    error = result.error.as_deref().unwrap_or(""),
+                    scanned,
+                    video_count,
+                    error_count,
+                    "scan result"
+                );
                 let _ = progress_tx.send(WorkerMessage::ScanProgress {
                     result: result.clone(),
                     scanned,
@@ -552,6 +585,14 @@ fn start_scan(app: &mut AppState) -> Option<Receiver<WorkerMessage>> {
                     error_count,
                 });
             },
+        );
+        tracing::debug!(
+            source = %source,
+            scanned = results.len(),
+            video_count,
+            error_count,
+            elapsed_ms = started.elapsed().as_millis(),
+            "scan worker complete"
         );
         let _ = tx.send(WorkerMessage::ScanComplete {
             results,
@@ -579,6 +620,14 @@ fn start_plan(app: &mut AppState) -> Option<Receiver<WorkerMessage>> {
     app.add_log("Planning: identifying and scoring media files...");
     app.set_operation("Planning", format!("0/{total} files processed"));
     app.current_screen = Screen::PlanPreview;
+    tracing::debug!(
+        total,
+        threshold = app.confidence_threshold,
+        movies_root = app.movies_target.as_ref().map(|p| p.as_str()).unwrap_or(""),
+        tv_root = app.tv_target.as_ref().map(|p| p.as_str()).unwrap_or(""),
+        online_providers = app.config.identification.use_online_providers,
+        "plan requested"
+    );
 
     let scan_results = app.scan_results.clone();
     let config = app.config.clone();
@@ -589,6 +638,7 @@ fn start_plan(app: &mut AppState) -> Option<Receiver<WorkerMessage>> {
 
     thread::spawn(move || {
         let started = Instant::now();
+        tracing::debug!(total, threshold, "plan worker started");
         let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().ok();
         let mut items = Vec::new();
         let mut processed = 0;
@@ -610,9 +660,33 @@ fn start_plan(app: &mut AppState) -> Option<Receiver<WorkerMessage>> {
             };
             let score = score_identification_result(&ident);
             let item = ident.item;
+            let title = item.title.clone().unwrap_or_default();
+            let destination = if score.confidence >= threshold {
+                Some(plan_path(&item, movies_root.as_str(), tv_root.as_str()))
+            } else {
+                None
+            };
 
-            if score.confidence >= threshold {
-                let destination = plan_path(&item, movies_root.as_str(), tv_root.as_str());
+            tracing::debug!(
+                source = %scan_result.path,
+                kind = ?item.kind,
+                title = %title,
+                year = item.year,
+                confidence = score.confidence,
+                threshold,
+                kept = destination.is_some(),
+                errors = ident.errors.len(),
+                "planned candidate evaluated"
+            );
+
+            if let Some(destination) = destination {
+                tracing::debug!(
+                    source = %scan_result.path,
+                    destination = %destination,
+                    title = %title,
+                    confidence = score.confidence,
+                    "planned candidate kept"
+                );
                 items.push(IdentifiedItem { media_item: item, score, destination });
             }
 
@@ -624,6 +698,12 @@ fn start_plan(app: &mut AppState) -> Option<Receiver<WorkerMessage>> {
             });
         }
 
+        tracing::debug!(
+            processed,
+            kept = items.len(),
+            elapsed_ms = started.elapsed().as_millis(),
+            "plan worker complete"
+        );
         let _ =
             tx.send(WorkerMessage::PlanComplete { items, processed, elapsed: started.elapsed() });
     });
@@ -683,14 +763,25 @@ fn start_move(app: &mut AppState) -> Receiver<WorkerMessage> {
         if dry_run { "Dry-run transfer" } else { "Moving files" },
         format!("0/{total} items processed"),
     );
+    tracing::debug!(
+        total,
+        dry_run,
+        conflict_policy = ?conflict_policy,
+        "move requested"
+    );
 
     let (tx, rx) = mpsc::channel();
 
     thread::spawn(move || {
         let started = Instant::now();
+        tracing::debug!(total, dry_run, conflict_policy = ?conflict_policy, "move worker started");
         let mut succeeded = 0;
         let journal = OperationJournal::create_temp("rosey_move").ok();
         let journal_path = journal.as_ref().map(|journal| journal.path().to_path_buf());
+        tracing::debug!(
+            journal_path = journal_path.as_ref().map(|path| path.as_str()).unwrap_or(""),
+            "move journal prepared"
+        );
 
         for (index, item) in items.into_iter().enumerate() {
             let result = move_with_sidecars_journaled(
@@ -716,6 +807,20 @@ fn start_move(app: &mut AppState) -> Receiver<WorkerMessage> {
             } else {
                 TransferState::Failed
             };
+            tracing::debug!(
+                index = index + 1,
+                total,
+                source = %item.media_item.source_path,
+                destination = %item.destination,
+                state = ?state,
+                success = result.success,
+                moved = result.moved.len(),
+                skipped = result.skipped.len(),
+                replaced = result.replaced.len(),
+                kept_both = result.kept_both.len(),
+                errors = result.errors.len(),
+                "move item processed"
+            );
 
             let _ = tx.send(WorkerMessage::MoveProgress {
                 index,
@@ -731,6 +836,12 @@ fn start_move(app: &mut AppState) -> Receiver<WorkerMessage> {
             journal.close();
         }
 
+        tracing::debug!(
+            succeeded,
+            total,
+            elapsed_ms = started.elapsed().as_millis(),
+            "move worker complete"
+        );
         let _ = tx.send(WorkerMessage::MoveComplete {
             succeeded,
             total,
@@ -776,12 +887,14 @@ fn start_manual_provider_search(app: &mut AppState) -> Option<Receiver<WorkerMes
     edit.search_status = format!("Searching online providers for {title}...");
     app.manual_search_running = true;
     app.set_operation("Searching providers", format!("Looking up {title}"));
+    tracing::debug!(title = %title, year, kind = ?kind, "manual provider search requested");
 
     let config = app.config.clone();
     let (tx, rx) = mpsc::channel();
 
     thread::spawn(move || {
         let started = Instant::now();
+        tracing::debug!(title = %title, year, kind = ?kind, "manual provider search worker started");
         let Ok(runtime) = tokio::runtime::Builder::new_current_thread().enable_all().build() else {
             let _ = tx.send(WorkerMessage::ManualSearchFailed {
                 message: "Failed to start async provider runtime".to_string(),
@@ -789,6 +902,7 @@ fn start_manual_provider_search(app: &mut AppState) -> Option<Receiver<WorkerMes
             return;
         };
 
+        let search_title = title.clone();
         let results = runtime.block_on(async move {
             let Ok(mut manager) = ProviderManager::new(
                 metadata_cache_dir(),
@@ -813,9 +927,9 @@ fn start_manual_provider_search(app: &mut AppState) -> Option<Receiver<WorkerMes
             }
 
             let values = if matches!(kind, MediaKind::Episode | MediaKind::Show) {
-                manager.search_tv_all(&title, year, true).await
+                manager.search_tv_all(&search_title, year, true).await
             } else {
-                manager.search_movie_all(&title, year, true).await
+                manager.search_movie_all(&search_title, year, true).await
             };
 
             Ok(values
@@ -827,12 +941,28 @@ fn start_manual_provider_search(app: &mut AppState) -> Option<Receiver<WorkerMes
 
         match results {
             Ok(results) => {
+                tracing::debug!(
+                    title = %title,
+                    year,
+                    kind = ?kind,
+                    results = results.len(),
+                    elapsed_ms = started.elapsed().as_millis(),
+                    "manual provider search complete"
+                );
                 let _ = tx.send(WorkerMessage::ManualSearchComplete {
                     results,
                     elapsed: started.elapsed(),
                 });
             }
             Err(message) => {
+                tracing::debug!(
+                    title = %title,
+                    year,
+                    kind = ?kind,
+                    error = %message,
+                    elapsed_ms = started.elapsed().as_millis(),
+                    "manual provider search failed"
+                );
                 let _ = tx.send(WorkerMessage::ManualSearchFailed { message });
             }
         }

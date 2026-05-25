@@ -53,7 +53,16 @@ pub fn scan_with_progress<F>(
 where
     F: FnMut(&ScanResult),
 {
+    tracing::debug!(
+        root = %root,
+        follow_symlinks = options.follow_symlinks,
+        max_depth = options.max_depth,
+        max_workers = options.max_workers,
+        "filesystem scan started"
+    );
+
     if !root.exists() {
+        tracing::debug!(root = %root, "filesystem scan skipped because root does not exist");
         return Vec::new();
     }
 
@@ -66,6 +75,12 @@ where
             0
         };
         let result = ScanResult { path: root.to_path_buf(), is_video, size_bytes, error: None };
+        tracing::debug!(
+            path = %result.path,
+            is_video = result.is_video,
+            size_bytes = result.size_bytes,
+            "filesystem scan single-file result"
+        );
         on_result(&result);
         return vec![result];
     }
@@ -97,6 +112,7 @@ where
                     .path()
                     .and_then(|p| Utf8PathBuf::from_path_buf(p.to_path_buf()).ok())
                     .unwrap_or_else(|| Utf8PathBuf::from(""));
+                tracing::debug!(path = %path, error = %error, "filesystem scan entry error");
                 Some(ScanResult {
                     path,
                     is_video: false,
@@ -107,11 +123,19 @@ where
         };
 
         if let Some(result) = result {
+            tracing::debug!(
+                path = %result.path,
+                is_video = result.is_video,
+                size_bytes = result.size_bytes,
+                error = result.error.as_deref().unwrap_or(""),
+                "filesystem scan result"
+            );
             on_result(&result);
             results.push(result);
         }
     }
 
+    tracing::debug!(root = %root, results = results.len(), "filesystem scan complete");
     results
 }
 

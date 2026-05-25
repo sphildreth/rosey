@@ -23,10 +23,8 @@ const GENERIC_ROOTS: &[&str] = &[
 
 const PERMITTED_NESTED: &[&str] = &["subs", "subtitles", "extras"];
 
-const SIDECAR_EXTENSIONS: &[&str] = &[
-    "srt", "ssa", "ass", "vtt", "sub", "idx", "sbv", "lrc", "smi", "stl", "nfo", "jpg", "jpeg",
-    "png",
-];
+const SIDECAR_EXTENSIONS: &[&str] =
+    &["srt", "ssa", "ass", "vtt", "sub", "idx", "sbv", "lrc", "smi", "stl", "nfo", "png"];
 
 #[derive(Debug, Clone)]
 pub struct MediaGroup {

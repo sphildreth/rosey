@@ -13,10 +13,7 @@ fn make_file(dir: &std::path::Path, name: &str, content: &str) {
 
 #[test]
 fn is_sidecar_recognizes_all_extensions() {
-    let exts = [
-        "srt", "ssa", "ass", "vtt", "sub", "idx", "sbv", "lrc", "smi", "stl", "nfo", "jpg", "jpeg",
-        "png",
-    ];
+    let exts = ["srt", "ssa", "ass", "vtt", "sub", "idx", "sbv", "lrc", "smi", "stl", "nfo", "png"];
     for ext in &exts {
         assert!(
             is_sidecar_path(Utf8Path::new(&format!("movie.{}", ext))),
@@ -29,7 +26,6 @@ fn is_sidecar_recognizes_all_extensions() {
 #[test]
 fn is_sidecar_case_insensitive() {
     assert!(is_sidecar_path(Utf8Path::new("movie.SRT")));
-    assert!(is_sidecar_path(Utf8Path::new("movie.JPG")));
     assert!(is_sidecar_path(Utf8Path::new("movie.PnG")));
 }
 
@@ -39,6 +35,14 @@ fn is_sidecar_rejects_non_sidecar() {
     assert!(!is_sidecar_path(Utf8Path::new("movie.mp4")));
     assert!(!is_sidecar_path(Utf8Path::new("movie.txt")));
     assert!(!is_sidecar_path(Utf8Path::new("movie")));
+}
+
+#[test]
+fn is_sidecar_rejects_jpg_images() {
+    assert!(!is_sidecar_path(Utf8Path::new("movie.jpg")));
+    assert!(!is_sidecar_path(Utf8Path::new("movie.jpeg")));
+    assert!(!is_sidecar_path(Utf8Path::new("movie.JPG")));
+    assert!(!is_sidecar_path(Utf8Path::new("movie.JPEG")));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -54,18 +58,20 @@ fn discover_finds_matching_files() {
     make_file(dir, "movie.srt", "subtitles");
     make_file(dir, "movie.nfo", "metadata");
     make_file(dir, "movie.jpg", "poster");
+    make_file(dir, "movie.jpeg", "poster");
     make_file(dir, "other.srt", "other");
 
     let media_path = dir.join("movie.mkv");
     let media = Utf8Path::from_path(&media_path).unwrap();
     let sidecars = discover_sidecars(media);
 
-    assert_eq!(sidecars.len(), 3);
+    assert_eq!(sidecars.len(), 2);
     let names: std::collections::HashSet<_> =
         sidecars.iter().map(|p| p.file_name().unwrap().to_string()).collect();
     assert!(names.contains("movie.srt"));
     assert!(names.contains("movie.nfo"));
-    assert!(names.contains("movie.jpg"));
+    assert!(!names.contains("movie.jpg"));
+    assert!(!names.contains("movie.jpeg"));
     assert!(!names.contains("other.srt"));
 }
 
@@ -130,11 +136,13 @@ fn discover_case_insensitive_extensions() {
     make_file(dir, "movie.mkv", "video");
     make_file(dir, "movie.SRT", "subs");
     make_file(dir, "movie.JPG", "poster");
+    make_file(dir, "movie.JPEG", "poster");
 
     let media_path = dir.join("movie.mkv");
     let media = Utf8Path::from_path(&media_path).unwrap();
     let sidecars = discover_sidecars(media);
-    assert_eq!(sidecars.len(), 2);
+    assert_eq!(sidecars.len(), 1);
+    assert!(sidecars.iter().any(|path| path.file_name() == Some("movie.SRT")));
 }
 
 #[test]

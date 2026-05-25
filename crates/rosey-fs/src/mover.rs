@@ -7,6 +7,7 @@ use std::io::{BufReader, Read};
 use thiserror::Error;
 
 use crate::journal::{JournalOp, OperationJournal};
+use crate::sidecars::is_sidecar_path;
 
 const VERIFY_CHUNK_SIZE: usize = 1024 * 1024;
 const VERIFY_CONTENT_THRESHOLD: u64 = 1024 * 1024;
@@ -114,11 +115,22 @@ pub fn move_file_transactional_journaled(
     dry_run: bool,
     journal: Option<&OperationJournal>,
 ) -> Result<(bool, MoveAction), MoveError> {
+    tracing::debug!(
+        source = %source,
+        destination = %dest,
+        conflict_policy = ?conflict_policy,
+        dry_run,
+        journaled = journal.is_some(),
+        "transactional move started"
+    );
+
     if dry_run {
+        tracing::debug!(source = %source, destination = %dest, "transactional move dry-run");
         return Ok((true, MoveAction::WouldMove));
     }
 
     if !source.exists() {
+        tracing::debug!(source = %source, destination = %dest, "transactional move source missing");
         if let Some(j) = journal {
             j.record_error(JournalOp::Failed, source, dest, "source does not exist");
         }
@@ -133,6 +145,11 @@ pub fn move_file_transactional_journaled(
     if dest.exists() {
         match conflict_policy {
             ConflictPolicy::Skip => {
+                tracing::debug!(
+                    source = %source,
+                    destination = %dest,
+                    "transactional move skipped because destination exists"
+                );
                 if let Some(j) = journal {
                     j.record_op(JournalOp::Skipped, source, dest);
                 }
@@ -141,12 +158,23 @@ pub fn move_file_transactional_journaled(
             ConflictPolicy::KeepBoth => {
                 effective_dest = apply_conflict_suffix(dest);
                 action = MoveAction::KeptBoth;
+                tracing::debug!(
+                    source = %source,
+                    requested_destination = %dest,
+                    effective_destination = %effective_dest,
+                    "transactional move keeping both files"
+                );
                 if let Some(j) = journal {
                     j.record_op(JournalOp::KeptBoth, source, &effective_dest);
                 }
             }
             ConflictPolicy::Replace => {
                 action = MoveAction::Replaced;
+                tracing::debug!(
+                    source = %source,
+                    destination = %dest,
+                    "transactional move replacing existing destination"
+                );
                 if let Some(j) = journal {
                     j.record_op(JournalOp::Replaced, source, dest);
                 }
@@ -156,6 +184,13 @@ pub fn move_file_transactional_journaled(
 
     if let Some(parent) = effective_dest.parent() {
         if let Err(e) = fs::create_dir_all(parent) {
+            tracing::debug!(
+                source = %source,
+                destination = %effective_dest,
+                parent = %parent,
+                error = %e,
+                "transactional move failed to create destination directory"
+            );
             if let Some(j) = journal {
                 j.record_error(JournalOp::Failed, source, &effective_dest, &e.to_string());
             }
@@ -163,18 +198,39 @@ pub fn move_file_transactional_journaled(
         }
     }
 
-    if same_volume(source, &effective_dest) {
+    let same_volume = same_volume(source, &effective_dest);
+    tracing::debug!(
+        source = %source,
+        destination = %effective_dest,
+        same_volume,
+        source_size_bytes = src_size,
+        "transactional move path selected"
+    );
+
+    if same_volume {
         if let Some(j) = journal {
             j.record_op(JournalOp::MoveStarted, source, &effective_dest);
         }
 
         match fs::rename(source.as_std_path(), effective_dest.as_std_path()) {
             Ok(_) => {
+                tracing::debug!(
+                    source = %source,
+                    destination = %effective_dest,
+                    action = ?action,
+                    "transactional rename complete"
+                );
                 if let Some(j) = journal {
                     j.record_op(JournalOp::Completed, source, &effective_dest);
                 }
             }
             Err(e) => {
+                tracing::debug!(
+                    source = %source,
+                    destination = %effective_dest,
+                    error = %e,
+                    "transactional rename failed"
+                );
                 if let Some(j) = journal {
                     j.record_error(JournalOp::Failed, source, &effective_dest, &e.to_string());
                 }
@@ -190,6 +246,12 @@ pub fn move_file_transactional_journaled(
         }
 
         if let Err(e) = fs::copy(source.as_std_path(), effective_dest.as_std_path()) {
+            tracing::debug!(
+                source = %source,
+                destination = %effective_dest,
+                error = %e,
+                "transactional copy failed"
+            );
             if let Some(j) = journal {
                 j.record_error(JournalOp::Failed, source, &effective_dest, &e.to_string());
             }
@@ -198,6 +260,13 @@ pub fn move_file_transactional_journaled(
 
         let dst_size = fs::metadata(&effective_dest).map(|m| m.len()).unwrap_or(0);
         if src_size != dst_size {
+            tracing::debug!(
+                source = %source,
+                destination = %effective_dest,
+                source_size_bytes = src_size,
+                destination_size_bytes = dst_size,
+                "transactional copy verification failed size check"
+            );
             let _ = fs::remove_file(effective_dest.as_std_path());
             if let Some(j) = journal {
                 j.record_error(
@@ -213,8 +282,19 @@ pub fn move_file_transactional_journaled(
         }
 
         match verify_file_copy(source, &effective_dest) {
-            Ok(true) => {}
+            Ok(true) => {
+                tracing::debug!(
+                    source = %source,
+                    destination = %effective_dest,
+                    "transactional copy verification passed"
+                );
+            }
             Ok(false) => {
+                tracing::debug!(
+                    source = %source,
+                    destination = %effective_dest,
+                    "transactional copy verification failed content check"
+                );
                 let _ = fs::remove_file(effective_dest.as_std_path());
                 if let Some(j) = journal {
                     j.record_error(
@@ -229,6 +309,12 @@ pub fn move_file_transactional_journaled(
                 ));
             }
             Err(e) => {
+                tracing::debug!(
+                    source = %source,
+                    destination = %effective_dest,
+                    error = %e,
+                    "transactional copy verification errored"
+                );
                 let _ = fs::remove_file(effective_dest.as_std_path());
                 if let Some(j) = journal {
                     j.record_error(JournalOp::Failed, source, &effective_dest, &e.to_string());
@@ -242,6 +328,12 @@ pub fn move_file_transactional_journaled(
         }
 
         if let Err(e) = fs::remove_file(source.as_std_path()) {
+            tracing::debug!(
+                source = %source,
+                destination = %effective_dest,
+                error = %e,
+                "transactional copy failed to delete source after verification"
+            );
             if let Some(j) = journal {
                 j.record_error(
                     JournalOp::Failed,
@@ -261,6 +353,12 @@ pub fn move_file_transactional_journaled(
         }
     }
 
+    tracing::debug!(
+        source = %source,
+        destination = %effective_dest,
+        action = ?action,
+        "transactional move complete"
+    );
     Ok((true, action))
 }
 
@@ -415,6 +513,15 @@ pub fn move_with_sidecars_journaled(
 ) -> MoveResult {
     let source = &item.source_path;
     let sidecars = collect_sidecars(item);
+    tracing::debug!(
+        source = %source,
+        destination = %destination,
+        sidecars = sidecars.len(),
+        conflict_policy = ?conflict_policy,
+        dry_run,
+        journaled = journal.is_some(),
+        "move with sidecars started"
+    );
 
     let mut all_sources: Vec<Utf8PathBuf> = Vec::with_capacity(1 + sidecars.len());
     all_sources.push(source.clone());
@@ -436,6 +543,12 @@ pub fn move_with_sidecars_journaled(
         check_preflight(&all_sources.iter().map(|p| p.as_ref()).collect::<Vec<_>>(), dest_dir);
 
     if !preflight.free_space_ok || !preflight.path_len_ok || !preflight.perms_ok {
+        tracing::debug!(
+            source = %source,
+            destination = %destination,
+            errors = ?preflight.errors,
+            "move with sidecars preflight failed"
+        );
         if let Some(j) = journal {
             j.record_error(JournalOp::Failed, source, destination, "preflight checks failed");
         }
@@ -446,10 +559,17 @@ pub fn move_with_sidecars_journaled(
     match move_file_transactional_journaled(source, destination, conflict_policy, dry_run, journal)
     {
         Ok((true, action)) => {
+            tracing::debug!(
+                source = %source,
+                destination = %destination,
+                action = ?action,
+                "primary media move complete"
+            );
             record_action(&mut result, action, destination);
             moved_files.push(destination.to_path_buf());
         }
         Ok((false, _)) | Err(_) => {
+            tracing::debug!(source = %source, destination = %destination, "primary media move failed");
             result.errors.push(format!("Failed to move {source}"));
             if let Some(j) = journal {
                 j.record_error(JournalOp::Failed, source, destination, "move failed");
@@ -463,6 +583,11 @@ pub fn move_with_sidecars_journaled(
 
     for sidecar in &sidecars {
         let sidecar_dest = sidecar_destination(source, sidecar, dest_parent, dest_stem);
+        tracing::debug!(
+            sidecar = %sidecar,
+            destination = %sidecar_dest,
+            "sidecar move started"
+        );
 
         match move_file_transactional_journaled(
             sidecar,
@@ -472,10 +597,23 @@ pub fn move_with_sidecars_journaled(
             journal,
         ) {
             Ok((true, action)) => {
+                tracing::debug!(
+                    sidecar = %sidecar,
+                    destination = %sidecar_dest,
+                    action = ?action,
+                    "sidecar move complete"
+                );
                 record_action(&mut result, action, &sidecar_dest);
                 moved_files.push(sidecar_dest);
             }
             Ok((false, _)) | Err(_) => {
+                tracing::debug!(
+                    sidecar = %sidecar,
+                    destination = %sidecar_dest,
+                    moved_files = moved_files.len(),
+                    dry_run,
+                    "sidecar move failed"
+                );
                 if !dry_run {
                     for moved in &moved_files {
                         let _ = fs::remove_file(moved.as_std_path());
@@ -497,6 +635,15 @@ pub fn move_with_sidecars_journaled(
     }
 
     result.success = true;
+    tracing::debug!(
+        source = %source,
+        destination = %destination,
+        moved = result.moved.len(),
+        skipped = result.skipped.len(),
+        replaced = result.replaced.len(),
+        kept_both = result.kept_both.len(),
+        "move with sidecars complete"
+    );
     result
 }
 
@@ -507,12 +654,17 @@ fn collect_sidecars(item: &MediaItem) -> Vec<Utf8PathBuf> {
     let discovered = crate::discover_sidecars(source);
 
     for sidecar in item.sidecars.iter().chain(discovered.iter()) {
-        if sidecar == source || !sidecar.is_file() || !seen.insert(sidecar.clone()) {
+        if sidecar == source
+            || !sidecar.is_file()
+            || !is_sidecar_path(sidecar)
+            || !seen.insert(sidecar.clone())
+        {
             continue;
         }
         sidecars.push(sidecar.clone());
     }
 
+    tracing::debug!(source = %source, sidecars = sidecars.len(), "sidecars collected");
     sidecars
 }
 

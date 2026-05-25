@@ -242,6 +242,7 @@ fn move_with_sidecars_moves_all_files() {
     fs::write(&main, "video").unwrap();
     fs::write(source_dir.join("movie.srt"), "subs").unwrap();
     fs::write(source_dir.join("movie.nfo"), "meta").unwrap();
+    fs::write(source_dir.join("movie.jpg"), "poster").unwrap();
 
     let _item = MediaItem::unknown(main.clone());
     let item = MediaItem {
@@ -260,6 +261,45 @@ fn move_with_sidecars_moves_all_files() {
     assert!(dest.exists());
     assert!(dest.parent().unwrap().join("Test Movie.srt").exists());
     assert!(dest.parent().unwrap().join("Test Movie.nfo").exists());
+    assert!(source_dir.join("movie.jpg").exists());
+    assert!(!dest.parent().unwrap().join("Test Movie.jpg").exists());
+}
+
+#[test]
+fn move_with_sidecars_ignores_explicit_jpg_sidecars() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+
+    let source_dir = dir.join("source");
+    let dest_dir = dir.join("dest");
+    fs::create_dir_all(&source_dir).unwrap();
+
+    let main = media_path(&source_dir, "movie.mkv");
+    let poster = media_path(&source_dir, "movie.jpg");
+    let poster_jpeg = media_path(&source_dir, "movie.jpeg");
+    fs::write(&main, "video").unwrap();
+    fs::write(&poster, "poster").unwrap();
+    fs::write(&poster_jpeg, "poster").unwrap();
+
+    let item = MediaItem {
+        kind: rosey_core::MediaKind::Movie,
+        source_path: main.clone(),
+        title: Some("Test Movie".into()),
+        sidecars: vec![poster.clone(), poster_jpeg.clone()],
+        ..MediaItem::unknown(main.clone())
+    };
+
+    let dest = media_path(&dest_dir, "Test Movie").join("Test Movie.mkv");
+
+    let result = move_with_sidecars(&item, &dest, ConflictPolicy::Skip, false);
+
+    assert!(result.success);
+    assert!(!main.exists());
+    assert!(dest.exists());
+    assert!(poster.exists());
+    assert!(poster_jpeg.exists());
+    assert!(!dest.parent().unwrap().join("Test Movie.jpg").exists());
+    assert!(!dest.parent().unwrap().join("Test Movie.jpeg").exists());
 }
 
 #[test]

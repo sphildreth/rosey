@@ -1,10 +1,8 @@
 use camino::{Utf8Path, Utf8PathBuf};
 use std::fs;
 
-pub const SIDECAR_EXTENSIONS: &[&str] = &[
-    "srt", "ssa", "ass", "vtt", "sub", "idx", "sbv", "lrc", "smi", "stl", "nfo", "jpg", "jpeg",
-    "png",
-];
+pub const SIDECAR_EXTENSIONS: &[&str] =
+    &["srt", "ssa", "ass", "vtt", "sub", "idx", "sbv", "lrc", "smi", "stl", "nfo", "png"];
 
 pub fn is_sidecar_path(path: &Utf8Path) -> bool {
     path.extension()

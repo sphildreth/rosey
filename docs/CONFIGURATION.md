@@ -84,6 +84,22 @@ Rosey preserves the `ui` section when loading and saving config, although the te
 
 `behavior.confirm_delete` defaults to `true`. When enabled, the TUI asks before `Del` removes a selected item from the Move Plan or deletes a selected scan result's containing directory from disk. When disabled, those delete actions happen immediately.
 
+## Logging
+
+Both `rosey-cli` and `rosey-tui` initialize tracing from the `logging` section.
+
+- `level`: Default tracing level. Use `DEBUG` when troubleshooting scans, planning, provider search, deletion, and move behavior.
+- `file_path`: When set, logs are appended to this file. Parent directories are created if needed.
+- `max_file_size_mb`: At startup, Rosey rotates the configured log file when it is larger than this size.
+- `backup_count`: Number of rotated files to keep, using suffixes like `rosey.log.1`.
+- `log_to_console`: Used when `file_path` is empty. Console logging is most useful for the CLI; file logging is usually better for the TUI.
+
+`ROSEY_LOG` overrides `logging.level`, and `RUST_LOG` is used as a secondary override. For example:
+
+```bash
+ROSEY_LOG=debug cargo run -p rosey-cli -- scan
+```
+
 ## TUI Theme configuration
 
 The TUI reads the `ui.theme` config key for its built-in palette.

@@ -31,18 +31,33 @@ fn same_directory_subtitle() {
 }
 
 #[test]
-fn same_directory_image() {
+fn same_directory_jpg_is_ignored() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
 
     make_file(dir, "Movie (2023).mkv", "video");
     make_file(dir, "poster.jpg", "image");
+    make_file(dir, "poster.jpeg", "image");
+
+    let media = media_path(dir, "Movie (2023).mkv");
+    let companions = discover_companion_files(&media);
+
+    assert!(companions.is_empty());
+}
+
+#[test]
+fn same_directory_png_is_still_supported() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+
+    make_file(dir, "Movie (2023).mkv", "video");
+    make_file(dir, "poster.png", "image");
 
     let media = media_path(dir, "Movie (2023).mkv");
     let companions = discover_companion_files(&media);
 
     assert_eq!(companions.len(), 1);
-    assert!(companions[0].as_str().ends_with("poster.jpg"));
+    assert!(companions[0].as_str().ends_with("poster.png"));
 }
 
 #[test]
@@ -57,7 +72,8 @@ fn same_directory_mixed() {
     let media = media_path(dir, "Movie (2023).mkv");
     let companions = discover_companion_files(&media);
 
-    assert_eq!(companions.len(), 2);
+    assert_eq!(companions.len(), 1);
+    assert!(companions[0].as_str().ends_with("Movie (2023).srt"));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -215,7 +231,8 @@ fn mixed_locations() {
     let media = media_path(dir, "Movie (2023).mkv");
     let companions = discover_companion_files(&media);
 
-    assert_eq!(companions.len(), 3);
+    assert_eq!(companions.len(), 2);
+    assert!(!companions.iter().any(|path| path.as_str().ends_with("poster.jpg")));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
