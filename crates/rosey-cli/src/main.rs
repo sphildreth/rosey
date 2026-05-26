@@ -2,13 +2,18 @@ use anyhow::Result;
 use camino::Utf8PathBuf;
 use clap::{Parser, Subcommand, ValueEnum};
 use rosey_core::{
-    init_fallback_tracing, init_tracing, load_config, run_doctor, save_config as save_rosey_config,
+    compare_person_movies, config_path, init_fallback_tracing, init_tracing, load_config,
+    parse_person_reference, run_doctor, save_config as save_rosey_config,
     score_identification_result, ConfidenceBand, ConfidenceThresholds, ConflictPolicy,
-    DoctorReport, DoctorStatus, IdentifyOptions, MediaItem, MediaKind, RoseyConfig, Score,
+    DoctorReport, DoctorStatus, IdentifyOptions, LibraryMovieMatchKind, MediaItem, MediaKind,
+    MissingPersonMoviesReport, PersonIdentity, PersonReference, RoseyConfig, Score,
 };
-use rosey_fs::{format_bytes, move_with_sidecars, Scanner};
-use rosey_metadata::identify_file_with_metadata;
+use rosey_fs::{
+    format_bytes, index_movie_library, move_with_sidecars, MovieLibraryIndexOptions, Scanner,
+};
+use rosey_metadata::{identify_file_with_metadata, ProviderManager};
 use serde::Serialize;
+use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
 #[command(name = "rosey")]
@@ -37,6 +42,18 @@ enum Commands {
     Doctor {
         #[arg(long)]
         json: bool,
+    },
+
+    MissingByPerson {
+        person: String,
+        #[arg(long)]
+        movies: Option<Utf8PathBuf>,
+        #[arg(long)]
+        max_workers: Option<usize>,
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        include_owned: bool,
     },
 
     Run {
@@ -216,6 +233,79 @@ async fn main() -> Result<()> {
 
             if report.errors() > 0 {
                 std::process::exit(1);
+            }
+        }
+
+        Commands::MissingByPerson { person, movies, max_workers, json, include_owned } => {
+            let Some(movies_root) = resolve_config_path(movies, &config.paths.movies) else {
+                eprintln!("Error: No movies directory specified. Provide --movies or set paths.movies in config.");
+                std::process::exit(2);
+            };
+            if !movies_root.exists() {
+                eprintln!("Error: Movies directory does not exist: {movies_root}");
+                std::process::exit(1);
+            }
+            if config.providers.tmdb_api_key.trim().is_empty() {
+                eprintln!(
+                    "Error: TMDB API key is required. Set providers.tmdb_api_key in rosey.json."
+                );
+                std::process::exit(2);
+            }
+
+            let person_ref = match parse_person_reference(&person) {
+                Ok(person_ref) => person_ref,
+                Err(message) => {
+                    eprintln!("Error: {message}");
+                    std::process::exit(2);
+                }
+            };
+            let max_workers = resolve_max_workers(max_workers, &config);
+
+            tracing::info!(
+                person = %person,
+                movies_root = %movies_root,
+                max_workers,
+                json,
+                "cli missing-by-person started"
+            );
+
+            let mut manager =
+                ProviderManager::new(metadata_cache_dir(), config.providers.cache_ttl_days, true)?;
+            manager.configure_tmdb(
+                config.providers.tmdb_api_key.clone(),
+                config.providers.tmdb_language.clone(),
+                config.providers.tmdb_region.clone(),
+            );
+
+            let person_identity = match resolve_person_identity(&manager, person_ref).await {
+                Some(person_identity) => person_identity,
+                None => {
+                    eprintln!("Error: Could not resolve person from {person}");
+                    std::process::exit(1);
+                }
+            };
+            let credits = manager.get_person_movie_credits(&person_identity.tmdb_id, true).await;
+            let library_movies = index_movie_library(
+                &movies_root,
+                MovieLibraryIndexOptions {
+                    follow_symlinks: config.scanning.follow_symlinks,
+                    max_workers,
+                },
+            );
+
+            let report = compare_person_movies(person_identity, credits, library_movies);
+            tracing::info!(
+                missing = report.missing.len(),
+                owned = report.owned.len(),
+                credits = report.credits_scanned,
+                library_movies = report.library_movies_scanned,
+                "cli missing-by-person complete"
+            );
+
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                print_missing_person_movies(&report, include_owned);
             }
         }
 
@@ -423,6 +513,18 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+async fn resolve_person_identity(
+    manager: &ProviderManager,
+    person_ref: PersonReference,
+) -> Option<PersonIdentity> {
+    match person_ref {
+        PersonReference::Tmdb { id } => {
+            Some(PersonIdentity { tmdb_id: id, name: None, imdb_id: None })
+        }
+        PersonReference::Imdb { id } => manager.find_tmdb_person_by_imdb_id(&id, true).await,
+    }
+}
+
 fn partition_by_confidence(
     results: &[RunResultItem],
     thresholds: &ConfidenceThresholds,
@@ -535,6 +637,75 @@ fn format_item_info(item: &MediaItem) -> String {
             }
         }
         _ => item.title.clone().unwrap_or_else(|| "Unknown".to_string()),
+    }
+}
+
+fn metadata_cache_dir() -> PathBuf {
+    config_path()
+        .parent()
+        .map(|path| path.join("cache"))
+        .unwrap_or_else(|| PathBuf::from(".").join("cache"))
+}
+
+fn print_missing_person_movies(report: &MissingPersonMoviesReport, include_owned: bool) {
+    let person = report
+        .person
+        .name
+        .as_deref()
+        .map(ToString::to_string)
+        .unwrap_or_else(|| format!("TMDB person {}", report.person.tmdb_id));
+
+    println!("Person: {person}");
+    if let Some(imdb_id) = &report.person.imdb_id {
+        println!("IMDb: {imdb_id}");
+    }
+    println!("TMDB: {}", report.person.tmdb_id);
+    println!("Library movies scanned: {}", report.library_movies_scanned);
+    println!("Credits scanned: {}", report.credits_scanned);
+    println!("Owned: {}", report.owned.len());
+    println!("Missing: {}", report.missing.len());
+    println!();
+
+    if report.missing.is_empty() {
+        println!("No missing movies found.");
+    } else {
+        println!("Missing movies:");
+        for credit in &report.missing {
+            println!("  {}", format_person_credit(credit));
+        }
+    }
+
+    if include_owned {
+        println!();
+        println!("Owned movies:");
+        for owned in &report.owned {
+            println!(
+                "  {} -> {} ({})",
+                format_person_credit(&owned.credit),
+                owned.library_movie.source_path,
+                match_kind_label(owned.match_kind)
+            );
+        }
+    }
+}
+
+fn format_person_credit(credit: &rosey_core::PersonMovieCredit) -> String {
+    let year = credit.year.map(|year| year.to_string()).unwrap_or_else(|| "?".to_string());
+    let role = credit
+        .character
+        .as_deref()
+        .filter(|character| !character.is_empty())
+        .map(|character| format!(" as {character}"))
+        .unwrap_or_default();
+
+    format!("{} ({}) [tmdbid-{}]{}", credit.title, year, credit.tmdb_id, role)
+}
+
+fn match_kind_label(kind: LibraryMovieMatchKind) -> &'static str {
+    match kind {
+        LibraryMovieMatchKind::TmdbId => "tmdb id",
+        LibraryMovieMatchKind::ImdbId => "imdb id",
+        LibraryMovieMatchKind::TitleYear => "title/year",
     }
 }
 

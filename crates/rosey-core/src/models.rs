@@ -116,3 +116,63 @@ pub struct MoveResult {
     #[serde(default)]
     pub errors: Vec<String>,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "source")]
+pub enum PersonReference {
+    Tmdb { id: String },
+    Imdb { id: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PersonIdentity {
+    pub tmdb_id: String,
+    pub name: Option<String>,
+    pub imdb_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PersonMovieCredit {
+    pub tmdb_id: String,
+    pub title: String,
+    pub year: Option<u16>,
+    pub release_date: Option<String>,
+    pub character: Option<String>,
+    pub order: Option<u32>,
+    pub imdb_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LibraryMovie {
+    pub source_path: Utf8PathBuf,
+    pub tmdb_id: Option<String>,
+    pub imdb_id: Option<String>,
+    pub title: Option<String>,
+    pub year: Option<u16>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LibraryMovieMatchKind {
+    TmdbId,
+    ImdbId,
+    TitleYear,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OwnedPersonMovie {
+    pub credit: PersonMovieCredit,
+    pub library_movie: LibraryMovie,
+    pub match_kind: LibraryMovieMatchKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MissingPersonMoviesReport {
+    pub person: PersonIdentity,
+    #[serde(default)]
+    pub missing: Vec<PersonMovieCredit>,
+    #[serde(default)]
+    pub owned: Vec<OwnedPersonMovie>,
+    pub library_movies_scanned: usize,
+    pub credits_scanned: usize,
+}

@@ -165,6 +165,20 @@ impl TmdbProvider {
         self.request(&format!("/movie/{movie_id}"), &[]).await
     }
 
+    /// Find TMDB data by an external ID such as an IMDb name/title ID.
+    pub async fn find_by_external_id(
+        &self,
+        external_id: &str,
+        external_source: &str,
+    ) -> Option<serde_json::Value> {
+        self.request(&format!("/find/{external_id}"), &[("external_source", external_source)]).await
+    }
+
+    /// Get movie credits for a person.
+    pub async fn get_person_movie_credits(&self, person_id: &str) -> Option<serde_json::Value> {
+        self.request(&format!("/person/{person_id}/movie_credits"), &[]).await
+    }
+
     /// Get TV show details by ID.
     pub async fn get_tv_by_id(&self, tv_id: &str) -> Option<serde_json::Value> {
         self.request(&format!("/tv/{tv_id}"), &[]).await
