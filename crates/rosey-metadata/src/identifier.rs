@@ -309,7 +309,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn disabled_metadata_keeps_path_tmdb_id_unconfirmed() {
+    async fn disabled_metadata_extracts_path_tmdb_id() {
         let mut config = RoseyConfig::default();
         config.identification.use_online_providers = false;
         config.identification.movies_always_in_own_directory = false;
@@ -323,7 +323,8 @@ mod tests {
 
         assert_eq!(result.item.kind, MediaKind::Movie);
         assert_eq!(result.item.title.as_deref(), Some("The Matrix"));
-        assert_eq!(result.item.nfo.get("tmdbid").and_then(|id| id.as_deref()), None);
+        assert_eq!(result.item.nfo.get("tmdbid").and_then(|id| id.as_deref()), Some("603"));
+        assert!(result.reasons.iter().any(|r| r.contains("TMDB ID from directory name")));
     }
 
     #[test]

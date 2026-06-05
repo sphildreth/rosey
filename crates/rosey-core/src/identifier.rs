@@ -9,9 +9,9 @@ use crate::config::{IdentificationConfig, RoseyConfig};
 use crate::models::{IdentificationResult, MediaItem, MediaKind};
 use crate::nfo::{find_nfo_for_file, parse_nfo, NfoData};
 use crate::patterns::{
-    clean_title, clean_title_with_year, extract_date, extract_episode_info, extract_part,
-    extract_season_from_folder, extract_title_before_episode, extract_year, DateMatch,
-    EpisodeMatch,
+    clean_title, clean_title_with_year, extract_date, extract_episode_info,
+    extract_imdb_id_from_path, extract_part, extract_season_from_folder,
+    extract_title_before_episode, extract_tmdb_id_from_path, extract_year, DateMatch, EpisodeMatch,
 };
 
 const GENERIC_DIRS: &[&str] = &[
@@ -89,7 +89,7 @@ pub fn identify_file_with_options(
         .or_else(|| extract_episode_info(folder_name, None));
     let date_info = extract_date(filename);
 
-    let item = if episode_info.is_some()
+    let mut item = if episode_info.is_some()
         || date_info.is_some()
         || nfo_data.as_ref().and_then(|nfo| nfo.season).is_some()
     {
@@ -113,6 +113,20 @@ pub fn identify_file_with_options(
             &mut reasons,
         )
     };
+
+    if item.nfo.get("tmdbid").and_then(|v| v.as_ref()).is_none() {
+        if let Some(tmdb_id) = extract_tmdb_id_from_path(path.as_str()) {
+            item.nfo.insert("tmdbid".to_string(), Some(tmdb_id));
+            reasons.push("TMDB ID from directory name".to_string());
+        }
+    }
+
+    if item.nfo.get("imdbid").and_then(|v| v.as_ref()).is_none() {
+        if let Some(imdb_id) = extract_imdb_id_from_path(path.as_str()) {
+            item.nfo.insert("imdbid".to_string(), Some(imdb_id));
+            reasons.push("IMDB ID from directory name".to_string());
+        }
+    }
 
     IdentificationResult { item, reasons, errors }
 }

@@ -2,6 +2,7 @@ use camino::Utf8PathBuf;
 use std::collections::BTreeMap;
 
 use crate::models::{IdentifiedEpisode, MediaItem, MediaKind, Score, TvSeason, TvShow};
+use crate::patterns::{extract_imdb_id_from_path, extract_tmdb_id_from_path};
 use crate::planner::Planner;
 
 pub fn build_tv_shows(items: &[(MediaItem, Score)], planner: &Planner) -> Vec<TvShow> {
@@ -90,6 +91,29 @@ fn build_single_show(
     }
 
     let source_root = source_root.unwrap_or_else(|| Utf8PathBuf::from("/unknown"));
+
+    if tmdb_id.is_none() {
+        tmdb_id = extract_tmdb_id_from_path(source_root.as_str());
+        if tmdb_id.is_none() {
+            for (item, _score) in episodes {
+                if let Some(id) = extract_tmdb_id_from_path(item.source_path.as_str()) {
+                    tmdb_id = Some(id);
+                    break;
+                }
+            }
+        }
+    }
+    if imdb_id.is_none() {
+        imdb_id = extract_imdb_id_from_path(source_root.as_str());
+        if imdb_id.is_none() {
+            for (item, _score) in episodes {
+                if let Some(id) = extract_imdb_id_from_path(item.source_path.as_str()) {
+                    imdb_id = Some(id);
+                    break;
+                }
+            }
+        }
+    }
 
     let mut seasons = Vec::new();
     for (season_num, season_episodes) in &season_map {
@@ -220,22 +244,48 @@ mod tests {
     }
 
     #[test]
-    fn build_tv_show_separates_different_shows() {
+    fn build_tv_show_extracts_tmdb_id_from_source_root() {
         use crate::planner::Planner;
         use crate::scorer::score_identification;
+        use camino::Utf8PathBuf;
 
         let planner = Planner { movies_root: "".into(), tv_root: "/tv".into() };
 
-        let ep1 = make_episode("Show A", None, 1, 1);
-        let ep2 = make_episode("Show B", None, 1, 1);
+        let mut ep = make_episode("Breaking Bad", Some(2008), 1, 1);
+        ep.source_path =
+            Utf8PathBuf::from("/source/Breaking Bad (2008) [tmdbid-1396]/Season 01/S01E01.mkv");
 
-        let items: Vec<(MediaItem, crate::models::Score)> = vec![
-            (ep1, score_identification(&make_episode("Show A", None, 1, 1))),
-            (ep2, score_identification(&make_episode("Show B", None, 1, 1))),
-        ];
+        let items: Vec<(MediaItem, crate::models::Score)> =
+            vec![(ep, score_identification(&make_episode("Breaking Bad", Some(2008), 1, 1)))];
 
         let shows = super::build_tv_shows(&items, &planner);
-        assert_eq!(shows.len(), 2);
+
+        assert_eq!(shows.len(), 1);
+        let show = &shows[0];
+        assert_eq!(show.tmdb_id.as_deref(), Some("1396"));
+    }
+
+    #[test]
+    fn build_tv_show_extracts_imdb_id_from_source_root() {
+        use crate::planner::Planner;
+        use crate::scorer::score_identification;
+        use camino::Utf8PathBuf;
+
+        let planner = Planner { movies_root: "".into(), tv_root: "/tv".into() };
+
+        let mut ep = make_episode("Breaking Bad", Some(2008), 1, 1);
+        ep.source_path = Utf8PathBuf::from(
+            "/source/Breaking Bad (2008) [imdbid-tt0903747]/Season 01/S01E01.mkv",
+        );
+
+        let items: Vec<(MediaItem, crate::models::Score)> =
+            vec![(ep, score_identification(&make_episode("Breaking Bad", Some(2008), 1, 1)))];
+
+        let shows = super::build_tv_shows(&items, &planner);
+
+        assert_eq!(shows.len(), 1);
+        let show = &shows[0];
+        assert_eq!(show.imdb_id.as_deref(), Some("tt0903747"));
     }
 
     #[test]

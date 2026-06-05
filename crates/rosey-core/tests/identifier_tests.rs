@@ -16,7 +16,7 @@ fn identify_file_uses_file_stem_for_movie_titles() {
 }
 
 #[test]
-fn path_tmdb_id_without_provider_does_not_enter_nfo() {
+fn path_tmdb_id_extracts_from_directory_name() {
     let mut config = RoseyConfig::default();
     config.identification.movies_always_in_own_directory = false;
 
@@ -26,7 +26,20 @@ fn path_tmdb_id_without_provider_does_not_enter_nfo() {
     );
 
     assert_eq!(result.item.kind, MediaKind::Movie);
-    assert_eq!(result.item.nfo.get("tmdbid").and_then(|id| id.as_deref()), None);
+    assert_eq!(result.item.nfo.get("tmdbid").and_then(|id| id.as_deref()), Some("603"));
+    assert!(result.reasons.iter().any(|r| r.contains("TMDB ID from directory name")));
+}
+
+#[test]
+fn path_imdb_id_extracts_from_directory_name() {
+    let config = RoseyConfig::default();
+
+    let result = identify_file_fast(
+        &Utf8PathBuf::from("/tv/Breaking Bad (2008) [imdbid-tt0903747]/Season 01/S01E01.mkv"),
+        &config,
+    );
+
+    assert_eq!(result.item.nfo.get("imdbid").and_then(|id| id.as_deref()), Some("tt0903747"));
 }
 
 #[test]

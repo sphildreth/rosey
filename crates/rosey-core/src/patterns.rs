@@ -542,6 +542,19 @@ pub fn extract_tmdb_id_from_path(path: &str) -> Option<String> {
     None
 }
 
+static IMDB_ID_PATTERN: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)\[imdbid-(tt\d+)\]").expect("valid imdbid regex"));
+
+/// Extract IMDB ID from any path component (closest match wins).
+pub fn extract_imdb_id_from_path(path: &str) -> Option<String> {
+    for component in path.rsplit(['/', '\\']) {
+        if let Some(caps) = IMDB_ID_PATTERN.captures(component) {
+            return Some(caps.get(1)?.as_str().to_string());
+        }
+    }
+    None
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Title cleanup
 // ─────────────────────────────────────────────────────────────────────────────
@@ -822,5 +835,33 @@ mod tests {
         assert_eq!(extract_season_from_folder("Extras"), None);
         assert_eq!(extract_season_from_folder("Behind the Scenes"), None);
         assert_eq!(extract_season_from_folder("Trailers"), None);
+    }
+
+    #[test]
+    fn extract_tmdb_id_from_directory_name() {
+        assert_eq!(
+            extract_tmdb_id_from_path("/tv/Breaking Bad (2008) [tmdbid-1396]/Season 01/S01E01.mkv"),
+            Some("1396".to_string())
+        );
+        assert_eq!(
+            extract_tmdb_id_from_path("/movies/The Matrix (1999) [tmdbid-603]/movie.mkv"),
+            Some("603".to_string())
+        );
+        assert_eq!(extract_tmdb_id_from_path("/movies/Random Movie/movie.mkv"), None);
+    }
+
+    #[test]
+    fn extract_imdb_id_from_directory_name() {
+        assert_eq!(
+            extract_imdb_id_from_path(
+                "/tv/Breaking Bad (2008) [imdbid-tt0903747]/Season 01/S01E01.mkv"
+            ),
+            Some("tt0903747".to_string())
+        );
+        assert_eq!(
+            extract_imdb_id_from_path("/movies/The Matrix (1999) [imdbid-tt0133093]/movie.mkv"),
+            Some("tt0133093".to_string())
+        );
+        assert_eq!(extract_imdb_id_from_path("/movies/Random Movie/movie.mkv"), None);
     }
 }
