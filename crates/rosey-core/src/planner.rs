@@ -1,3 +1,4 @@
+use crate::models::TvShow;
 use crate::MediaItem;
 use camino::Utf8PathBuf;
 use once_cell::sync::Lazy;
@@ -173,6 +174,50 @@ impl Planner {
 
         self.tv_root.join(show_folder).join(season_folder).join(filename)
     }
+
+    pub fn plan_show(&self, show: &TvShow) -> Vec<Utf8PathBuf> {
+        if self.tv_root.as_str().is_empty() {
+            return show
+                .seasons
+                .iter()
+                .flat_map(|s| s.episodes.iter())
+                .map(|ep| ep.item.source_path.clone())
+                .chain(show.show_assets.iter().map(|a| a.source_path.clone()))
+                .chain(
+                    show.seasons
+                        .iter()
+                        .flat_map(|s| s.season_assets.iter().map(|a| a.source_path.clone())),
+                )
+                .collect();
+        }
+
+        let mut paths = Vec::new();
+
+        for season in &show.seasons {
+            for episode in &season.episodes {
+                paths.push(episode.destination.clone());
+            }
+            for asset in &season.season_assets {
+                paths.push(asset.destination.clone());
+            }
+        }
+
+        for asset in &show.show_assets {
+            paths.push(asset.destination.clone());
+        }
+
+        paths
+    }
+}
+
+pub fn build_show_folder_name(show: &TvShow) -> String {
+    let title = sanitize_name(&title_case(&show.title));
+    let mut folder =
+        if let Some(year) = show.year { format!("{} ({})", title, year) } else { title };
+    if let Some(tmdb_id) = &show.tmdb_id {
+        folder = format!("{} [tmdbid-{}]", folder, tmdb_id);
+    }
+    folder
 }
 
 /// Convenience function to plan a destination path.

@@ -496,6 +496,39 @@ fn run_app(
                     KeyCode::Char('C') => {
                         app.toggle_sort(SortColumn::Confidence);
                     }
+                    KeyCode::Char('G') => {
+                        if app.current_screen == Screen::PlanPreview
+                            && !app.identified_items.is_empty()
+                        {
+                            app.toggle_show_group_mode();
+                            app.add_log(format!("TV show group mode: {}", app.show_group_mode));
+                        }
+                    }
+                    KeyCode::Enter
+                        if app.current_screen == Screen::PlanPreview && app.show_group_mode =>
+                    {
+                        if app.expanded_show_index == Some(app.selected_show_index) {
+                            app.expanded_show_index = None;
+                            app.add_log("Collapsed show detail");
+                        } else {
+                            app.expanded_show_index = Some(app.selected_show_index);
+                            app.add_log("Expanded show detail");
+                        }
+                    }
+                    KeyCode::Up
+                        if app.current_screen == Screen::PlanPreview
+                            && app.show_group_mode
+                            && app.selected_show_index > 0 =>
+                    {
+                        app.selected_show_index -= 1;
+                    }
+                    KeyCode::Down
+                        if app.current_screen == Screen::PlanPreview
+                            && app.show_group_mode
+                            && app.selected_show_index + 1 < app.tv_shows.len() =>
+                    {
+                        app.selected_show_index += 1;
+                    }
                     _ => {}
                 }
             }
@@ -1059,6 +1092,11 @@ fn handle_worker_message(app: &mut AppState, message: WorkerMessage) -> bool {
             app.identified_items = items;
             app.rebuild_filtered();
             app.selected_index = 0;
+            if app.show_group_mode {
+                app.build_tv_shows_from_items();
+                app.selected_show_index = 0;
+                app.expanded_show_index = None;
+            }
             app.plan_running = false;
             app.plan_progress = (processed, processed);
             app.set_operation(

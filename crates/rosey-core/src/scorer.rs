@@ -1,4 +1,4 @@
-use crate::models::{IdentificationResult, MediaItem, MediaKind, Score};
+use crate::models::{IdentificationResult, MediaItem, MediaKind, Score, TvShow};
 
 pub fn score_identification(item: &MediaItem) -> Score {
     let result =
@@ -84,6 +84,74 @@ pub fn score_identification_result(result: &IdentificationResult) -> Score {
         confidence -= 5 * result.errors.len() as i16;
         reasons.push(format!("{} error(s) during identification", result.errors.len()));
     }
+
+    Score { confidence: confidence.clamp(0, 100) as u8, reasons }
+}
+
+pub fn score_show(show: &TvShow) -> Score {
+    if show.seasons.is_empty() {
+        return Score { confidence: 0, reasons: vec!["Empty show with no episodes".to_string()] };
+    }
+
+    let episode_count: usize = show.seasons.iter().map(|s| s.episodes.len()).sum();
+    if episode_count == 0 {
+        return Score { confidence: 0, reasons: vec!["Show has no episodes".to_string()] };
+    }
+
+    let total_confidence: i16 = show
+        .seasons
+        .iter()
+        .flat_map(|s| s.episodes.iter())
+        .map(|ep| ep.score.confidence as i16)
+        .sum();
+    let avg_confidence = total_confidence / episode_count as i16;
+
+    let mut confidence = avg_confidence;
+    let mut reasons = Vec::new();
+
+    reasons.push(format!(
+        "TV show: {} season(s), {} episode(s)",
+        show.seasons.len(),
+        episode_count
+    ));
+
+    if show.seasons.len() > 1 {
+        confidence += 10;
+        reasons.push("Multiple seasons identified".to_string());
+    }
+
+    if show.tmdb_id.is_some() {
+        confidence += 15;
+        reasons.push("Show TMDB ID available".to_string());
+    }
+
+    if show.tvdb_id.is_some() {
+        confidence += 10;
+        reasons.push("Show TVDB ID available".to_string());
+    }
+
+    if show.imdb_id.is_some() {
+        confidence += 10;
+        reasons.push("Show IMDB ID available".to_string());
+    }
+
+    if show.year.is_some() {
+        confidence += 5;
+        reasons.push("Show year identified".to_string());
+    }
+
+    let min_episode_confidence = show
+        .seasons
+        .iter()
+        .flat_map(|s| s.episodes.iter())
+        .map(|ep| ep.score.confidence)
+        .min()
+        .unwrap_or(0);
+
+    reasons.push(format!(
+        "Episode confidence: avg {}, min {}",
+        avg_confidence, min_episode_confidence
+    ));
 
     Score { confidence: confidence.clamp(0, 100) as u8, reasons }
 }

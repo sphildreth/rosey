@@ -2,14 +2,16 @@ use anyhow::Result;
 use camino::Utf8PathBuf;
 use clap::{Parser, Subcommand, ValueEnum};
 use rosey_core::{
-    compare_person_movies, config_path, init_fallback_tracing, init_tracing, load_config,
-    parse_person_reference, run_doctor, save_config as save_rosey_config,
-    score_identification_result, ConfidenceBand, ConfidenceThresholds, ConflictPolicy,
-    DoctorReport, DoctorStatus, IdentifyOptions, LibraryMovieMatchKind, MediaItem, MediaKind,
-    MissingPersonMoviesReport, PersonIdentity, PersonReference, RoseyConfig, Score,
+    build_tv_shows, compare_person_movies, config_path, discover_show_assets,
+    init_fallback_tracing, init_tracing, load_config, parse_person_reference, run_doctor,
+    save_config as save_rosey_config, score_identification_result, score_show, ConfidenceBand,
+    ConfidenceThresholds, ConflictPolicy, DoctorReport, DoctorStatus, IdentifyOptions,
+    LibraryMovieMatchKind, MediaItem, MediaKind, MissingPersonMoviesReport, PersonIdentity,
+    PersonReference, Planner, RoseyConfig, Score, TvShow,
 };
 use rosey_fs::{
-    format_bytes, index_movie_library, move_with_sidecars, MovieLibraryIndexOptions, Scanner,
+    format_bytes, index_movie_library, move_show, move_with_sidecars, MovieLibraryIndexOptions,
+    Scanner,
 };
 use rosey_metadata::{identify_file_with_metadata, ProviderManager};
 use serde::Serialize;
@@ -76,6 +78,8 @@ enum Commands {
         json: bool,
         #[arg(long)]
         save_config: bool,
+        #[arg(long)]
+        group_shows: bool,
     },
 }
 
@@ -320,6 +324,7 @@ async fn main() -> Result<()> {
             conflict_policy,
             json,
             save_config,
+            group_shows,
         } => {
             let source_cli = source.clone();
             let movies_target_cli = movies_target.clone();
@@ -424,6 +429,28 @@ async fn main() -> Result<()> {
                 results.push(RunResultItem { item, score, destination });
             }
 
+            let mut tv_shows: Vec<TvShow> = Vec::new();
+            if group_shows {
+                let tv_root_str = tv_target.as_ref().map(|p| p.as_str()).unwrap_or("");
+                let planner = Planner {
+                    movies_root: movies_target.clone().unwrap_or_default(),
+                    tv_root: tv_target.clone().unwrap_or_default(),
+                };
+                let items_with_scores: Vec<(MediaItem, Score)> =
+                    results.iter().map(|r| (r.item.clone(), r.score.clone())).collect();
+                tv_shows = build_tv_shows(&items_with_scores, &planner);
+                for show in &mut tv_shows {
+                    let assets = discover_show_assets(show);
+                    show.show_assets = assets;
+                    show.resolve_asset_destinations(tv_root_str);
+                    for season in &mut show.seasons {
+                        for episode in &mut season.episodes {
+                            episode.destination = planner.plan_destination(&episode.item);
+                        }
+                    }
+                }
+            }
+
             let (green, yellow, red) =
                 partition_by_confidence(&results, &config.identification.confidence_thresholds);
 
@@ -458,6 +485,50 @@ async fn main() -> Result<()> {
                 }
             }
 
+            if !tv_shows.is_empty() {
+                println!("TV Shows: {}", tv_shows.len());
+                for show in &tv_shows {
+                    let show_score = score_show(show);
+                    let year_str =
+                        show.year.map(|y| y.to_string()).unwrap_or_else(|| "?".to_string());
+                    let show_label = confidence_label(
+                        show_score.confidence,
+                        &config.identification.confidence_thresholds,
+                    );
+                    println!(
+                        "[{show_label}] {:3}% | {} ({}) — {} season(s), {} episode(s)",
+                        show_score.confidence,
+                        show.title,
+                        year_str,
+                        show.seasons.len(),
+                        show.total_episodes(),
+                    );
+                    if !show_score.reasons.is_empty() {
+                        println!("  Reasons: {}", show_score.reasons.join("; "));
+                    }
+                    for season in &show.seasons {
+                        println!(
+                            "  Season {:02}: {} episode(s)",
+                            season.season_number,
+                            season.episodes.len(),
+                        );
+                        for ep in &season.episodes {
+                            println!("    {} -> {}", ep.item.source_path, ep.destination);
+                        }
+                    }
+                    if !show.show_assets.is_empty() {
+                        println!("  Show assets: {} file(s)", show.show_assets.len());
+                        for asset in &show.show_assets {
+                            println!(
+                                "    {:?}: {} -> {}",
+                                asset.asset_kind, asset.source_path, asset.destination
+                            );
+                        }
+                    }
+                    println!();
+                }
+            }
+
             if actually_dry_run {
                 tracing::info!(planned = results.len(), "cli run dry-run complete");
                 println!("DRY-RUN mode — no files were moved");
@@ -466,6 +537,9 @@ async fn main() -> Result<()> {
                 let mut errors: Vec<String> = Vec::new();
 
                 for result in &results {
+                    if group_shows && matches!(result.item.kind, MediaKind::Episode) {
+                        continue;
+                    }
                     let move_result = move_with_sidecars(
                         &result.item,
                         &result.destination,
@@ -492,6 +566,38 @@ async fn main() -> Result<()> {
                             eprintln!("Move error: {err}");
                         }
                         errors.extend(move_result.errors.clone());
+                    }
+                }
+
+                if !tv_shows.is_empty() && !actually_dry_run {
+                    let planner = Planner {
+                        movies_root: movies_target.clone().unwrap_or_default(),
+                        tv_root: tv_target.clone().unwrap_or_default(),
+                    };
+                    for show in &tv_shows {
+                        let show_result = move_show(show, &planner, conflict_policy, false);
+                        tracing::debug!(
+                            show_title = %show.title,
+                            moved = show_result.total_moved,
+                            errors = show_result.total_errors,
+                            "cli run move_show result"
+                        );
+                        if show_result.success {
+                            println!(
+                                "Moved show: {} ({}) — {} files",
+                                show.title,
+                                show.year.map(|y| y.to_string()).unwrap_or_default(),
+                                show_result.total_moved,
+                            );
+                        } else {
+                            eprintln!(
+                                "Move errors for show {}: {} errors",
+                                show.title, show_result.total_errors
+                            );
+                            for err in &show_result.errors {
+                                eprintln!("  {err}");
+                            }
+                        }
                     }
                 }
 

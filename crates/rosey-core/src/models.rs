@@ -176,3 +176,72 @@ pub struct MissingPersonMoviesReport {
     pub library_movies_scanned: usize,
     pub credits_scanned: usize,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TvShow {
+    pub title: String,
+    pub year: Option<u16>,
+    pub tmdb_id: Option<String>,
+    pub tvdb_id: Option<String>,
+    pub imdb_id: Option<String>,
+    pub source_root: Utf8PathBuf,
+    pub seasons: Vec<TvSeason>,
+    pub show_assets: Vec<ShowAsset>,
+    pub confidence: u8,
+    #[serde(default)]
+    pub reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TvSeason {
+    pub season_number: u16,
+    pub episodes: Vec<IdentifiedEpisode>,
+    pub season_assets: Vec<ShowAsset>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IdentifiedEpisode {
+    pub item: MediaItem,
+    pub score: Score,
+    pub destination: Utf8PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShowAsset {
+    pub source_path: Utf8PathBuf,
+    pub asset_kind: ShowAssetKind,
+    pub destination: Utf8PathBuf,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ShowAssetKind {
+    Poster,
+    Backdrop,
+    Banner,
+    Logo,
+    Thumb,
+    Landscape,
+    Nfo,
+    ThemeMusic,
+    ExtrasFolder,
+    SeasonPoster,
+    SeasonBackdrop,
+    SeasonBanner,
+    SeasonThumb,
+    SeasonNfo,
+    EpisodeThumb,
+    EpisodeSubtitle,
+    Other,
+}
+
+impl TvShow {
+    pub fn total_episodes(&self) -> usize {
+        self.seasons.iter().map(|s| s.episodes.len()).sum()
+    }
+
+    pub fn season_numbers(&self) -> Vec<u16> {
+        let mut nums: Vec<u16> = self.seasons.iter().map(|s| s.season_number).collect();
+        nums.sort();
+        nums
+    }
+}

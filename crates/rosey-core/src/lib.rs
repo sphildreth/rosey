@@ -10,6 +10,8 @@ pub mod nfo;
 pub mod patterns;
 pub mod planner;
 pub mod scorer;
+pub mod show_assets;
+pub mod show_builder;
 pub mod wanted;
 
 pub use companions::*;
@@ -23,4 +25,6 @@ pub use nfo::*;
 pub use patterns::*;
 pub use planner::*;
 pub use scorer::*;
+pub use show_assets::*;
+pub use show_builder::*;
 pub use wanted::*;

@@ -1,5 +1,5 @@
 use camino::{Utf8Path, Utf8PathBuf};
-use rosey_core::{ConflictPolicy, MediaItem, MoveResult};
+use rosey_core::{ConflictPolicy, MediaItem, MoveResult, ShowAssetKind, TvShow};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fs::{self, File};
@@ -705,4 +705,285 @@ fn record_action(result: &mut MoveResult, action: MoveAction, path: &Utf8Path) {
         MoveAction::KeptBoth => result.kept_both.push(path.to_path_buf()),
         MoveAction::WouldMove => {}
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShowMoveResult {
+    pub show_title: String,
+    pub show_year: Option<u16>,
+    pub episode_results: Vec<EpisodeMoveResult>,
+    pub asset_results: Vec<AssetMoveResult>,
+    pub success: bool,
+    pub total_moved: usize,
+    pub total_skipped: usize,
+    pub total_replaced: usize,
+    pub total_kept_both: usize,
+    pub total_errors: usize,
+    pub rollback_performed: bool,
+    pub errors: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EpisodeMoveResult {
+    pub season: u16,
+    pub episode_numbers: Vec<u16>,
+    pub source_path: Utf8PathBuf,
+    pub destination: Utf8PathBuf,
+    pub move_result: MoveResult,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssetMoveResult {
+    pub source_path: Utf8PathBuf,
+    pub destination: Utf8PathBuf,
+    pub asset_kind: ShowAssetKind,
+    pub success: bool,
+    pub error: Option<String>,
+}
+
+pub fn move_show(
+    show: &TvShow,
+    planner: &rosey_core::Planner,
+    conflict_policy: ConflictPolicy,
+    dry_run: bool,
+) -> ShowMoveResult {
+    move_show_journaled(show, planner, conflict_policy, dry_run, None)
+}
+
+pub fn move_show_journaled(
+    show: &TvShow,
+    planner: &rosey_core::Planner,
+    conflict_policy: ConflictPolicy,
+    dry_run: bool,
+    journal: Option<&OperationJournal>,
+) -> ShowMoveResult {
+    let mut result = ShowMoveResult {
+        show_title: show.title.clone(),
+        show_year: show.year,
+        episode_results: Vec::new(),
+        asset_results: Vec::new(),
+        success: false,
+        total_moved: 0,
+        total_skipped: 0,
+        total_replaced: 0,
+        total_kept_both: 0,
+        total_errors: 0,
+        rollback_performed: false,
+        errors: Vec::new(),
+    };
+
+    let destinations = planner.plan_show(show);
+    if destinations.is_empty() {
+        result.errors.push("No destinations to move".to_string());
+        return result;
+    }
+
+    if !dry_run {
+        for dest in &destinations {
+            if let Some(parent) = dest.parent() {
+                if !parent.exists() {
+                    if let Err(e) = fs::create_dir_all(parent.as_std_path()) {
+                        let error = format!("Failed to create directory {}: {e}", parent);
+                        tracing::debug!(directory = %parent, error = %e, "move_show directory creation failed");
+                        if let Some(j) = journal {
+                            j.record_error(JournalOp::Failed, &Utf8PathBuf::new(), dest, &error);
+                        }
+                        result.errors.push(error);
+                        result.total_errors += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    for season in &show.seasons {
+        for episode in &season.episodes {
+            let dest = planner.plan_destination(&episode.item);
+            let move_result = move_with_sidecars_journaled(
+                &episode.item,
+                &dest,
+                conflict_policy,
+                dry_run,
+                journal,
+            );
+
+            result.total_moved += move_result.moved.len();
+            result.total_skipped += move_result.skipped.len();
+            result.total_replaced += move_result.replaced.len();
+            result.total_kept_both += move_result.kept_both.len();
+            result.total_errors += move_result.errors.len();
+            if move_result.rollback_performed {
+                result.rollback_performed = true;
+            }
+            result.errors.extend(move_result.errors.clone());
+
+            result.episode_results.push(EpisodeMoveResult {
+                season: episode.item.season.unwrap_or(0),
+                episode_numbers: episode.item.episodes.clone(),
+                source_path: episode.item.source_path.clone(),
+                destination: dest,
+                move_result,
+            });
+        }
+    }
+
+    for asset in &show.show_assets {
+        if !asset.source_path.exists() {
+            let error = format!("Asset source does not exist: {}", asset.source_path);
+            tracing::debug!(
+                source = %asset.source_path,
+                destination = %asset.destination,
+                kind = ?asset.asset_kind,
+                "asset source missing"
+            );
+            result.errors.push(error);
+            result.total_errors += 1;
+            result.asset_results.push(AssetMoveResult {
+                source_path: asset.source_path.clone(),
+                destination: asset.destination.clone(),
+                asset_kind: asset.asset_kind,
+                success: false,
+                error: Some(format!("Source missing: {}", asset.source_path)),
+            });
+            continue;
+        }
+
+        if let Some(parent) = asset.destination.parent() {
+            if !parent.exists() && !dry_run {
+                if let Err(e) = fs::create_dir_all(parent.as_std_path()) {
+                    let error = format!("Failed to create asset directory {}: {e}", parent);
+                    tracing::debug!(directory = %parent, error = %e, "asset directory creation failed");
+                    result.errors.push(error.clone());
+                    result.total_errors += 1;
+                    result.asset_results.push(AssetMoveResult {
+                        source_path: asset.source_path.clone(),
+                        destination: asset.destination.clone(),
+                        asset_kind: asset.asset_kind,
+                        success: false,
+                        error: Some(error),
+                    });
+                    continue;
+                }
+            }
+        }
+
+        let (success, action) = match move_file_transactional_journaled(
+            &asset.source_path,
+            &asset.destination,
+            conflict_policy,
+            dry_run,
+            journal,
+        ) {
+            Ok((true, action)) => (true, action),
+            Ok((false, _)) | Err(_) => (false, MoveAction::Moved),
+        };
+
+        if success {
+            result.total_moved += 1;
+            match action {
+                MoveAction::Moved | MoveAction::WouldMove => {}
+                MoveAction::Skipped => result.total_skipped += 1,
+                MoveAction::Replaced => result.total_replaced += 1,
+                MoveAction::KeptBoth => result.total_kept_both += 1,
+            }
+        } else {
+            result.total_errors += 1;
+        }
+
+        result.asset_results.push(AssetMoveResult {
+            source_path: asset.source_path.clone(),
+            destination: asset.destination.clone(),
+            asset_kind: asset.asset_kind,
+            success,
+            error: if success {
+                None
+            } else {
+                Some(format!("Failed to move asset: {}", asset.source_path))
+            },
+        });
+    }
+
+    for season in &show.seasons {
+        for asset in &season.season_assets {
+            if !asset.source_path.exists() {
+                let error = format!("Season asset source does not exist: {}", asset.source_path);
+                result.errors.push(error);
+                result.total_errors += 1;
+                result.asset_results.push(AssetMoveResult {
+                    source_path: asset.source_path.clone(),
+                    destination: asset.destination.clone(),
+                    asset_kind: asset.asset_kind,
+                    success: false,
+                    error: Some(format!("Source missing: {}", asset.source_path)),
+                });
+                continue;
+            }
+
+            if let Some(parent) = asset.destination.parent() {
+                if !parent.exists() && !dry_run {
+                    if let Err(e) = fs::create_dir_all(parent.as_std_path()) {
+                        let error =
+                            format!("Failed to create season asset directory {}: {e}", parent);
+                        result.errors.push(error.clone());
+                        result.total_errors += 1;
+                        result.asset_results.push(AssetMoveResult {
+                            source_path: asset.source_path.clone(),
+                            destination: asset.destination.clone(),
+                            asset_kind: asset.asset_kind,
+                            success: false,
+                            error: Some(error),
+                        });
+                        continue;
+                    }
+                }
+            }
+
+            let (success, action) = match move_file_transactional_journaled(
+                &asset.source_path,
+                &asset.destination,
+                conflict_policy,
+                dry_run,
+                journal,
+            ) {
+                Ok((true, action)) => (true, action),
+                Ok((false, _)) | Err(_) => (false, MoveAction::Moved),
+            };
+
+            if success {
+                result.total_moved += 1;
+                match action {
+                    MoveAction::Moved | MoveAction::WouldMove => {}
+                    MoveAction::Skipped => result.total_skipped += 1,
+                    MoveAction::Replaced => result.total_replaced += 1,
+                    MoveAction::KeptBoth => result.total_kept_both += 1,
+                }
+            } else {
+                result.total_errors += 1;
+            }
+
+            result.asset_results.push(AssetMoveResult {
+                source_path: asset.source_path.clone(),
+                destination: asset.destination.clone(),
+                asset_kind: asset.asset_kind,
+                success,
+                error: if success {
+                    None
+                } else {
+                    Some(format!("Failed to move season asset: {}", asset.source_path))
+                },
+            });
+        }
+    }
+
+    result.success = result.total_errors == 0;
+
+    tracing::debug!(
+        show_title = %show.title,
+        total_moved = result.total_moved,
+        total_skipped = result.total_skipped,
+        total_errors = result.total_errors,
+        "move_show complete"
+    );
+
+    result
 }

@@ -345,21 +345,37 @@ fn render_plan_preview(frame: &mut Frame, app: &AppState, area: Rect) {
         (chunks[1], chunks[2])
     };
 
-    let search = Paragraph::new(if app.filter_input_active {
+    let mode_hint = if app.show_group_mode {
+        if app.filter_input_active {
+            format!("TV Shows | Filter: {}▌", app.search_query)
+        } else {
+            "TV Shows | G=flat view  Enter=expand  ↑↓=select".to_string()
+        }
+    } else if app.filter_input_active {
         format!("Filter: {}▌", app.search_query)
     } else {
         format!("Filter: {} (press / to search)", app.search_query)
-    })
-    .block(Block::default().borders(Borders::ALL));
+    };
 
+    let search = Paragraph::new(mode_hint).block(Block::default().borders(Borders::ALL));
     frame.render_widget(search, chunks[0]);
-    render_plan_detail(frame, app, detail_area);
+
+    if app.show_group_mode {
+        render_show_group_detail(frame, app, detail_area);
+    } else {
+        render_plan_detail(frame, app, detail_area);
+    }
 
     if let Some(message) = plan_empty_message(app) {
         let empty = Paragraph::new(message)
             .block(Block::default().title(" Move Plan ").borders(Borders::ALL))
             .wrap(Wrap { trim: true });
         frame.render_widget(empty, table_area);
+        return;
+    }
+
+    if app.show_group_mode {
+        render_show_group_table(frame, app, table_area);
         return;
     }
 
@@ -507,6 +523,202 @@ fn render_plan_detail(frame: &mut Frame, app: &AppState, area: Rect) {
         .block(Block::default().title(" Source -> Destination ").borders(Borders::ALL))
         .wrap(Wrap { trim: true });
     frame.render_widget(detail, area);
+}
+
+fn render_show_group_detail(frame: &mut Frame, app: &AppState, area: Rect) {
+    let lines = if let Some(show) = app.tv_shows.get(app.selected_show_index) {
+        let expanded = app.expanded_show_index == Some(app.selected_show_index);
+        let mut lines = vec![
+            Line::from(vec![
+                Span::styled("TV Show: ", app.theme.header),
+                Span::styled(&show.title, app.theme.strong),
+                Span::raw(if let Some(year) = show.year {
+                    format!(" ({year})")
+                } else {
+                    String::new()
+                }),
+                Span::raw(format!("  ({:3}%)", show.confidence)),
+            ]),
+            Line::from(vec![
+                Span::styled("Seasons: ", app.theme.dim),
+                Span::raw(format!("{}, {} episode(s)", show.seasons.len(), show.total_episodes())),
+            ]),
+        ];
+        if let Some(tmdb_id) = &show.tmdb_id {
+            lines.push(Line::from(vec![
+                Span::styled("TMDB: ", app.theme.dim),
+                Span::raw(tmdb_id.as_str()),
+            ]));
+        }
+        if let Some(tvdb_id) = &show.tvdb_id {
+            lines.push(Line::from(vec![
+                Span::styled("TVDB: ", app.theme.dim),
+                Span::raw(tvdb_id.as_str()),
+            ]));
+        }
+        lines.push(Line::from(vec![
+            Span::styled("Assets: ", app.theme.dim),
+            Span::raw(format!(
+                "{} show-level, {} season-level",
+                show.show_assets.len(),
+                show.seasons.iter().map(|s| s.season_assets.len()).sum::<usize>()
+            )),
+        ]));
+        if expanded {
+            for season in &show.seasons {
+                lines.push(Line::from(vec![
+                    Span::styled(format!("  Season {}: ", season.season_number), app.theme.strong),
+                    Span::raw(format!("{} episode(s)", season.episodes.len())),
+                ]));
+            }
+        }
+        lines.push(Line::from(vec![
+            Span::styled(if expanded { "Collapse: " } else { "Expand: " }, app.theme.dim),
+            Span::styled("Enter", app.theme.key),
+            Span::raw(if expanded { " to collapse" } else { " to expand seasons" }),
+            Span::raw("   "),
+            Span::styled("G", app.theme.key),
+            Span::raw(" flat view"),
+        ]));
+        lines
+    } else if app.tv_shows.is_empty() {
+        vec![
+            Line::from(vec![Span::styled("TV Show Groups", app.theme.header)]),
+            Line::from("No TV shows detected. Press G to return to flat item view."),
+        ]
+    } else {
+        vec![
+            Line::from(vec![Span::styled("TV Show Groups", app.theme.header)]),
+            Line::from(vec![Span::raw(plan_state_summary(app))]),
+            Line::from(vec![
+                Span::styled("Keys: ", app.theme.dim),
+                Span::raw("↑↓ select show, Enter expand, G flat view"),
+            ]),
+        ]
+    };
+
+    let detail = Paragraph::new(lines)
+        .block(Block::default().title(" TV Show Detail ").borders(Borders::ALL))
+        .wrap(Wrap { trim: true });
+    frame.render_widget(detail, area);
+}
+
+fn render_show_group_table(frame: &mut Frame, app: &AppState, area: Rect) {
+    if app.tv_shows.is_empty() {
+        let empty = Paragraph::new("No TV show groups found in the move plan.")
+            .block(Block::default().title(" TV Shows ").borders(Borders::ALL))
+            .wrap(Wrap { trim: true });
+        frame.render_widget(empty, area);
+        return;
+    }
+
+    let (visible_start, visible_end) =
+        plan_visible_window(app.selected_show_index, app.tv_shows.len(), area.height);
+
+    let expanded = app.expanded_show_index;
+
+    let mut rows = Vec::new();
+    for (idx, show) in app.tv_shows.iter().enumerate() {
+        if idx < visible_start || idx >= visible_end {
+            continue;
+        }
+        let is_selected = idx == app.selected_show_index;
+        let row_style = if is_selected { app.theme.selected } else { Style::new() };
+        let style = match configured_confidence_band(app, show.confidence) {
+            ConfidenceBand::Green => app.theme.ok,
+            ConfidenceBand::Yellow => app.theme.warn,
+            ConfidenceBand::Red => app.theme.error,
+        };
+        let year_str = show.year.map(|y| y.to_string()).unwrap_or_else(|| "-".to_string());
+        let ids = format_provider_ids(show);
+        let dest = show
+            .seasons
+            .first()
+            .and_then(|s| s.episodes.first())
+            .map(|e| e.destination.as_str())
+            .unwrap_or("?");
+
+        rows.push(
+            Row::new(vec![
+                Cell::from(format!("{:3}%", show.confidence)).style(style),
+                Cell::from("Show"),
+                Cell::from(show.title.as_str()),
+                Cell::from(year_str),
+                Cell::from(ids),
+                Cell::from(dest),
+            ])
+            .style(row_style),
+        );
+
+        if expanded == Some(idx) {
+            for season in &show.seasons {
+                let season_label = format!("  S{:02}", season.season_number);
+                let ep_count = format!("{} ep(s)", season.episodes.len());
+                rows.push(
+                    Row::new(vec![
+                        Cell::from(""),
+                        Cell::from(season_label),
+                        Cell::from(ep_count),
+                        Cell::from(""),
+                        Cell::from(""),
+                        Cell::from(""),
+                    ])
+                    .style(app.theme.dim),
+                );
+            }
+        }
+    }
+
+    let total_eps: usize = app.tv_shows.iter().map(|s| s.total_episodes()).sum();
+    let total_assets: usize = app.tv_shows.iter().map(|s| s.show_assets.len()).sum::<usize>();
+    let range_hint = if app.tv_shows.len() > visible_end.saturating_sub(visible_start) {
+        format!(
+            "rows {}-{} of {} shows, {} ep(s), {} asset(s)",
+            visible_start + 1,
+            visible_end,
+            app.tv_shows.len(),
+            total_eps,
+            total_assets,
+        )
+    } else {
+        format!("{} show(s), {} ep(s), {} asset(s)", app.tv_shows.len(), total_eps, total_assets,)
+    };
+
+    let widths = [
+        Constraint::Length(5),
+        Constraint::Length(7),
+        Constraint::Percentage(25),
+        Constraint::Length(6),
+        Constraint::Percentage(20),
+        Constraint::Percentage(40),
+    ];
+
+    let table = Table::new(rows, widths)
+        .header(
+            Row::new(vec!["Conf", "Kind", "Title", "Year", "IDs", "Destination"])
+                .style(app.theme.header),
+        )
+        .block(Block::default().title(format!(" TV Shows ({range_hint}) ")).borders(Borders::ALL));
+
+    frame.render_widget(table, area);
+}
+
+fn format_provider_ids(show: &rosey_core::TvShow) -> String {
+    let mut parts = Vec::new();
+    if let Some(id) = &show.tmdb_id {
+        parts.push(format!("tmdb:{}", id));
+    }
+    if let Some(id) = &show.tvdb_id {
+        parts.push(format!("tvdb:{}", id));
+    }
+    if let Some(id) = &show.imdb_id {
+        parts.push(format!("imdb:{}", id));
+    }
+    if parts.is_empty() {
+        "-".to_string()
+    } else {
+        parts.join(", ")
+    }
 }
 
 fn duplicate_indicator_cell<'a>(app: &AppState, item: &crate::app::IdentifiedItem) -> Cell<'a> {
@@ -898,6 +1110,10 @@ fn render_help(frame: &mut Frame, app: &AppState, area: Rect) {
         Line::from(vec![
             Span::styled("+/-", app.theme.key),
             Span::raw("Adjust confidence threshold"),
+        ]),
+        Line::from(vec![
+            Span::styled("G  ", app.theme.key),
+            Span::raw("Toggle TV show group view"),
         ]),
         Line::from(vec![
             Span::styled("e  ", app.theme.key),

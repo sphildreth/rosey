@@ -1,8 +1,9 @@
 use crate::theme::Theme;
 use camino::{Utf8Path, Utf8PathBuf};
 use rosey_core::{
-    identify_file_fast, plan_path, run_doctor, score_identification, ConfidenceThresholds,
-    ConflictPolicy, DoctorReport, MediaItem, MediaKind, RoseyConfig, Score,
+    build_tv_shows, discover_show_assets, identify_file_fast, plan_path, run_doctor,
+    score_identification, ConfidenceThresholds, ConflictPolicy, DoctorReport, MediaItem, MediaKind,
+    Planner, RoseyConfig, Score, TvShow,
 };
 use rosey_fs::ScanResult;
 use serde::{Deserialize, Serialize};
@@ -291,6 +292,11 @@ pub struct AppState {
     pub plan_running: bool,
     pub plan_progress: (usize, usize),
 
+    pub tv_shows: Vec<TvShow>,
+    pub show_group_mode: bool,
+    pub selected_show_index: usize,
+    pub expanded_show_index: Option<usize>,
+
     pub selected_index: usize,
     pub transfer_queue: Vec<TransferItem>,
     pub transfer_running: bool,
@@ -361,6 +367,11 @@ impl AppState {
             plan_running: false,
             plan_progress: (0, 0),
 
+            tv_shows: Vec::new(),
+            show_group_mode: false,
+            selected_show_index: 0,
+            expanded_show_index: None,
+
             selected_index: 0,
             transfer_queue: Vec::new(),
             transfer_running: false,
@@ -395,6 +406,40 @@ impl AppState {
             || self.plan_running
             || self.transfer_running
             || self.manual_search_running
+    }
+
+    pub fn build_tv_shows_from_items(&mut self) {
+        let tv_root = self.tv_target.as_ref().map(|p| p.as_str()).unwrap_or("");
+        let movies_root = self.movies_target.as_ref().map(|p| p.as_str()).unwrap_or("");
+        let planner = Planner {
+            movies_root: Utf8PathBuf::from(movies_root),
+            tv_root: Utf8PathBuf::from(tv_root),
+        };
+        let items_with_scores: Vec<(MediaItem, Score)> =
+            self.identified_items.iter().map(|i| (i.media_item.clone(), i.score.clone())).collect();
+
+        let mut shows = build_tv_shows(&items_with_scores, &planner);
+        for show in &mut shows {
+            let assets = discover_show_assets(show);
+            show.show_assets = assets;
+            show.resolve_asset_destinations(tv_root);
+            for season in &mut show.seasons {
+                for episode in &mut season.episodes {
+                    episode.destination = planner.plan_destination(&episode.item);
+                }
+            }
+        }
+        self.tv_shows = shows;
+    }
+
+    pub fn toggle_show_group_mode(&mut self) {
+        self.show_group_mode = !self.show_group_mode;
+        self.selected_show_index = 0;
+        self.expanded_show_index = None;
+        if self.show_group_mode {
+            self.build_tv_shows_from_items();
+        }
+        self.rebuild_filtered();
     }
 
     pub fn set_operation(&mut self, status: impl Into<String>, detail: impl Into<String>) {
