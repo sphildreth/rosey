@@ -2,8 +2,8 @@ use anyhow::Result;
 use camino::Utf8PathBuf;
 use clap::{Parser, Subcommand, ValueEnum};
 use rosey_core::{
-    build_tv_shows, compare_person_movies, config_path, discover_show_assets,
-    init_fallback_tracing, init_tracing, load_config, parse_person_reference, run_doctor,
+    build_and_resolve_tv_shows, compare_person_movies, config_path, init_fallback_tracing,
+    init_tracing, load_config, parse_person_reference, run_doctor,
     save_config as save_rosey_config, score_identification_result, score_show, ConfidenceBand,
     ConfidenceThresholds, ConflictPolicy, DoctorReport, DoctorStatus, IdentifyOptions,
     LibraryMovieMatchKind, MediaItem, MediaKind, MissingPersonMoviesReport, PersonIdentity,
@@ -438,17 +438,7 @@ async fn main() -> Result<()> {
                 };
                 let items_with_scores: Vec<(MediaItem, Score)> =
                     results.iter().map(|r| (r.item.clone(), r.score.clone())).collect();
-                tv_shows = build_tv_shows(&items_with_scores, &planner);
-                for show in &mut tv_shows {
-                    let assets = discover_show_assets(show);
-                    show.show_assets = assets;
-                    show.resolve_asset_destinations(tv_root_str);
-                    for season in &mut show.seasons {
-                        for episode in &mut season.episodes {
-                            episode.destination = planner.plan_destination(&episode.item);
-                        }
-                    }
-                }
+                tv_shows = build_and_resolve_tv_shows(&items_with_scores, &planner, tv_root_str);
             }
 
             let (green, yellow, red) =

@@ -1,9 +1,9 @@
 use crate::theme::Theme;
 use camino::{Utf8Path, Utf8PathBuf};
 use rosey_core::{
-    build_tv_shows, discover_show_assets, identify_file_fast, plan_path, run_doctor,
-    score_identification, ConfidenceThresholds, ConflictPolicy, DoctorReport, MediaItem, MediaKind,
-    Planner, RoseyConfig, Score, TvShow,
+    build_and_resolve_tv_shows, identify_file_fast, plan_path, run_doctor, score_identification,
+    ConfidenceThresholds, ConflictPolicy, DoctorReport, MediaItem, MediaKind, Planner, RoseyConfig,
+    Score, TvShow,
 };
 use rosey_fs::ScanResult;
 use serde::{Deserialize, Serialize};
@@ -418,18 +418,7 @@ impl AppState {
         let items_with_scores: Vec<(MediaItem, Score)> =
             self.identified_items.iter().map(|i| (i.media_item.clone(), i.score.clone())).collect();
 
-        let mut shows = build_tv_shows(&items_with_scores, &planner);
-        for show in &mut shows {
-            let assets = discover_show_assets(show);
-            show.show_assets = assets;
-            show.resolve_asset_destinations(tv_root);
-            for season in &mut show.seasons {
-                for episode in &mut season.episodes {
-                    episode.destination = planner.plan_destination(&episode.item);
-                }
-            }
-        }
-        self.tv_shows = shows;
+        self.tv_shows = build_and_resolve_tv_shows(&items_with_scores, &planner, tv_root);
     }
 
     pub fn toggle_show_group_mode(&mut self) {

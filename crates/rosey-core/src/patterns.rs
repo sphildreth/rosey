@@ -522,6 +522,10 @@ fn roman_to_int(s: &str) -> u16 {
 }
 
 pub fn extract_season_from_folder(folder_name: &str) -> Option<u16> {
+    let lower = folder_name.to_lowercase();
+    if lower == "specials" {
+        return Some(0);
+    }
     let caps = SEASON_FOLDER_PATTERN.captures(folder_name)?;
     let season_str = caps.name("season").or_else(|| caps.name("season2"))?.as_str();
     season_str.parse::<u16>().ok()
@@ -782,4 +786,41 @@ pub fn clean_title_with_year(raw: &str, extracted_year: Option<u16>) -> String {
     }
 
     title.split_whitespace().collect::<Vec<_>>().join(" ").trim().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_season_from_folder_season_numbering() {
+        assert_eq!(extract_season_from_folder("Season 1"), Some(1));
+        assert_eq!(extract_season_from_folder("Season 01"), Some(1));
+        assert_eq!(extract_season_from_folder("Season 10"), Some(10));
+        assert_eq!(extract_season_from_folder("season 2"), Some(2));
+        assert_eq!(extract_season_from_folder("season.3"), Some(3));
+        assert_eq!(extract_season_from_folder("Season 0"), Some(0));
+        assert_eq!(extract_season_from_folder("Season 00"), Some(0));
+    }
+
+    #[test]
+    fn extract_season_from_folder_specials() {
+        assert_eq!(extract_season_from_folder("Specials"), Some(0));
+        assert_eq!(extract_season_from_folder("specials"), Some(0));
+        assert_eq!(extract_season_from_folder("SPECIALS"), Some(0));
+    }
+
+    #[test]
+    fn extract_season_from_folder_s_prefix() {
+        assert_eq!(extract_season_from_folder("S01"), Some(1));
+        assert_eq!(extract_season_from_folder("S1"), Some(1));
+        assert_eq!(extract_season_from_folder("S00"), Some(0));
+    }
+
+    #[test]
+    fn extract_season_from_folder_no_match() {
+        assert_eq!(extract_season_from_folder("Extras"), None);
+        assert_eq!(extract_season_from_folder("Behind the Scenes"), None);
+        assert_eq!(extract_season_from_folder("Trailers"), None);
+    }
 }

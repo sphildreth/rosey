@@ -28,6 +28,13 @@ static SHOW_IMAGE_NAMES: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     .collect()
 });
 
+static EPISODE_THUMB_SUFFIXES: Lazy<HashSet<&'static str>> = Lazy::new(|| {
+    ["-thumb", ".thumb", "_thumb", "-landscape", ".landscape", "_landscape"]
+        .iter()
+        .copied()
+        .collect()
+});
+
 static SHOW_IMAGE_EXTS: Lazy<HashSet<&'static str>> =
     Lazy::new(|| ["jpg", "jpeg", "png", "webp", "gif", "tiff", "bmp"].iter().copied().collect());
 
@@ -305,15 +312,33 @@ fn discover_season_assets(
 fn classify_season_file(path: &Utf8Path, season_number: u16, show: &TvShow) -> Option<ShowAsset> {
     let base_name = path.file_stem().unwrap_or("").to_lowercase();
     let ext = path.extension().unwrap_or("").to_lowercase();
+    let file_name_lower = path.file_name().unwrap_or("").to_lowercase();
 
     if !SHOW_IMAGE_EXTS.contains(ext.as_str())
         && !SUBTITLE_EXTS.contains(ext.as_str())
         && !is_media_ext(&ext)
+        && ext != "nfo"
     {
         return None;
     }
 
     let season_folder = format!("Season {:02}", season_number);
+
+    if ext == "nfo" {
+        let season_nfo = format!("season{:02}.nfo", season_number);
+        let season_nfo_alt = format!("season {}.nfo", season_number);
+        if file_name_lower == season_nfo
+            || file_name_lower == season_nfo_alt
+            || file_name_lower == "season.nfo"
+        {
+            let file_name = path.file_name().unwrap_or("unknown");
+            return Some(ShowAsset {
+                source_path: path.to_path_buf(),
+                asset_kind: ShowAssetKind::SeasonNfo,
+                destination: show.relative_destination(&format!("{}/{}", season_folder, file_name)),
+            });
+        }
+    }
     let season_prefix = format!("season {:02}", season_number);
 
     if SHOW_IMAGE_EXTS.contains(ext.as_str()) {
@@ -340,6 +365,15 @@ fn classify_season_file(path: &Utf8Path, season_number: u16, show: &TvShow) -> O
             return Some(ShowAsset {
                 source_path: path.to_path_buf(),
                 asset_kind: ShowAssetKind::SeasonPoster,
+                destination: show.relative_destination(&format!("{}/{}", season_folder, file_name)),
+            });
+        }
+
+        if EPISODE_THUMB_SUFFIXES.iter().any(|suffix| base_name.ends_with(suffix)) {
+            let file_name = path.file_name().unwrap_or("unknown");
+            return Some(ShowAsset {
+                source_path: path.to_path_buf(),
+                asset_kind: ShowAssetKind::EpisodeThumb,
                 destination: show.relative_destination(&format!("{}/{}", season_folder, file_name)),
             });
         }
@@ -574,5 +608,84 @@ mod tests {
                 asset.destination
             );
         }
+    }
+
+    #[test]
+    fn discover_show_assets_finds_specials_season() {
+        let dir = tempfile::tempdir().unwrap();
+        let show_dir = dir.path().join("Test Show (2020)");
+        let specials_dir = show_dir.join("Specials");
+        fs::create_dir_all(&specials_dir).unwrap();
+        fs::write(specials_dir.join("poster.jpg"), b"").unwrap();
+
+        let show = make_show("Test Show", Some(2020), show_dir.to_string_lossy().as_ref());
+        let assets = discover_show_assets(&show);
+
+        assert!(
+            assets.iter().any(|a| matches!(a.asset_kind, ShowAssetKind::SeasonPoster)),
+            "Expected SeasonPoster asset for Specials directory, got: {:?}",
+            assets
+        );
+        let season_poster =
+            assets.iter().find(|a| matches!(a.asset_kind, ShowAssetKind::SeasonPoster)).unwrap();
+        assert!(
+            season_poster.destination.to_string().contains("Season 00"),
+            "Specials assets should be destined for Season 00, got: {}",
+            season_poster.destination
+        );
+    }
+
+    #[test]
+    fn discover_show_assets_finds_episode_thumb() {
+        let dir = tempfile::tempdir().unwrap();
+        let show_dir = dir.path().join("Test Show (2020)");
+        let season_dir = show_dir.join("Season 01");
+        fs::create_dir_all(&season_dir).unwrap();
+        fs::write(season_dir.join("S01E01-thumb.jpg"), b"").unwrap();
+
+        let show = make_show("Test Show", Some(2020), show_dir.to_string_lossy().as_ref());
+        let assets = discover_show_assets(&show);
+
+        assert!(
+            assets.iter().any(|a| a.asset_kind == ShowAssetKind::EpisodeThumb),
+            "Expected EpisodeThumb asset for S01E01-thumb.jpg, got: {:?}",
+            assets
+        );
+    }
+
+    #[test]
+    fn discover_show_assets_finds_season_nfo() {
+        let dir = tempfile::tempdir().unwrap();
+        let show_dir = dir.path().join("Test Show (2020)");
+        let season_dir = show_dir.join("Season 01");
+        fs::create_dir_all(&season_dir).unwrap();
+        fs::write(season_dir.join("season01.nfo"), b"<season></season>").unwrap();
+
+        let show = make_show("Test Show", Some(2020), show_dir.to_string_lossy().as_ref());
+        let assets = discover_show_assets(&show);
+
+        assert!(
+            assets.iter().any(|a| a.asset_kind == ShowAssetKind::SeasonNfo),
+            "Expected SeasonNfo asset for season01.nfo, got: {:?}",
+            assets
+        );
+    }
+
+    #[test]
+    fn discover_show_assets_finds_episode_subtitle() {
+        let dir = tempfile::tempdir().unwrap();
+        let show_dir = dir.path().join("Test Show (2020)");
+        let season_dir = show_dir.join("Season 01");
+        fs::create_dir_all(&season_dir).unwrap();
+        fs::write(season_dir.join("S01E01.srt"), b"subtitle content").unwrap();
+
+        let show = make_show("Test Show", Some(2020), show_dir.to_string_lossy().as_ref());
+        let assets = discover_show_assets(&show);
+
+        assert!(
+            assets.iter().any(|a| a.asset_kind == ShowAssetKind::EpisodeSubtitle),
+            "Expected EpisodeSubtitle asset for S01E01.srt, got: {:?}",
+            assets
+        );
     }
 }

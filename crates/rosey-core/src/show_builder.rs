@@ -27,6 +27,30 @@ pub fn build_tv_shows(items: &[(MediaItem, Score)], planner: &Planner) -> Vec<Tv
     shows
 }
 
+/// Build TV shows from items, discover assets, and resolve all destinations.
+///
+/// This encapsulates the full pipeline: `build_tv_shows` → `discover_show_assets` →
+/// `resolve_asset_destinations` → `plan_destination` per episode. Both CLI and TUI
+/// should call this instead of duplicating the steps.
+pub fn build_and_resolve_tv_shows(
+    items: &[(MediaItem, Score)],
+    planner: &Planner,
+    tv_root: &str,
+) -> Vec<TvShow> {
+    let mut shows = build_tv_shows(items, planner);
+    for show in &mut shows {
+        let assets = crate::show_assets::discover_show_assets(show);
+        show.show_assets = assets;
+        show.resolve_asset_destinations(tv_root);
+        for season in &mut show.seasons {
+            for episode in &mut season.episodes {
+                episode.destination = planner.plan_destination(&episode.item);
+            }
+        }
+    }
+    shows
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct ShowGroupKey {
     title: String,
@@ -255,5 +279,35 @@ mod tests {
         };
 
         assert_eq!(show.season_numbers(), vec![1, 2]);
+    }
+
+    #[test]
+    fn build_and_resolve_tv_shows_resolves_episode_destinations() {
+        use crate::planner::Planner;
+        use crate::scorer::score_identification;
+
+        let planner = Planner { movies_root: "".into(), tv_root: "/tv".into() };
+
+        let ep1 = make_episode("Test Show", Some(2020), 1, 1);
+        let ep2 = make_episode("Test Show", Some(2020), 1, 2);
+
+        let items: Vec<(MediaItem, crate::models::Score)> = vec![
+            (ep1, score_identification(&make_episode("Test Show", Some(2020), 1, 1))),
+            (ep2, score_identification(&make_episode("Test Show", Some(2020), 1, 2))),
+        ];
+
+        let shows = super::build_and_resolve_tv_shows(&items, &planner, "/tv");
+
+        assert_eq!(shows.len(), 1);
+        let show = &shows[0];
+        assert_eq!(show.seasons.len(), 1);
+        assert_eq!(show.seasons[0].episodes.len(), 2);
+        for ep in &show.seasons[0].episodes {
+            assert!(
+                ep.destination.starts_with("/tv"),
+                "Episode destination should start with /tv, got: {}",
+                ep.destination
+            );
+        }
     }
 }
