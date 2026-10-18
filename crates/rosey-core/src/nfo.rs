@@ -36,29 +36,28 @@ fn parse_nfo_str(xml: &str) -> Option<NfoData> {
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) => {
-                let tag = String::from_utf8_lossy(e.name().as_ref()).into_owned();
+                let tag = e.name().as_ref().to_owned();
                 if tag == "uniqueid" {
                     for attr in e.attributes() {
                         let attr = attr.ok()?;
-                        if attr.key.as_ref() == b"type" {
-                            current_uniqueid_type =
-                                Some(String::from_utf8_lossy(&attr.value).into_owned());
+                        if attr.key.as_ref() == "type" {
+                            current_uniqueid_type = Some(attr.value.into_owned());
                         }
                     }
                 }
                 current_text.clear();
             }
             Ok(Event::Text(e)) => {
-                current_text.push_str(&e.unescape().unwrap_or_default());
+                current_text.push_str(&quick_xml::escape::unescape(&e).unwrap_or_default());
             }
             Ok(Event::Empty(e)) => {
-                let tag = String::from_utf8_lossy(e.name().as_ref()).into_owned();
+                let tag = e.name().as_ref().to_owned();
                 if tag == "uniqueid" {
                     let mut uid_type = None;
                     for attr in e.attributes() {
                         let attr = attr.ok()?;
-                        if attr.key.as_ref() == b"type" {
-                            uid_type = Some(String::from_utf8_lossy(&attr.value).into_owned());
+                        if attr.key.as_ref() == "type" {
+                            uid_type = Some(attr.value.into_owned());
                         }
                     }
                     // Empty <uniqueid> has no text, so nothing to record
@@ -66,7 +65,7 @@ fn parse_nfo_str(xml: &str) -> Option<NfoData> {
                 }
             }
             Ok(Event::End(e)) => {
-                let tag = String::from_utf8_lossy(e.name().as_ref()).into_owned();
+                let tag = e.name().as_ref().to_owned();
                 let text = current_text.trim();
 
                 if !text.is_empty() {
@@ -110,7 +109,8 @@ fn parse_nfo_str(xml: &str) -> Option<NfoData> {
             | Ok(Event::Comment(_))
             | Ok(Event::Decl(_))
             | Ok(Event::DocType(_))
-            | Ok(Event::PI(_)) => {}
+            | Ok(Event::PI(_))
+            | Ok(Event::GeneralRef(_)) => {}
             Ok(Event::Eof) => break,
             Err(_) => return None,
         }

@@ -44,11 +44,12 @@ Complete for the provider, cache, and application integration surface used by th
 
 ## Intentional Deviations / Release Validation
 
-1. **Automatic lookup matches identifier behavior**: batch identification enriches files that already carry a `[tmdbid-*]` path tag, matching Python `Identifier`. Title search remains an explicit TUI identify action.
+1. **Automatic lookup exceeds the Python identifier**: batch identification confirms files that carry a `[tmdbid-*]` path tag (matching Python `Identifier`) and additionally auto-selects provider search results for movies and TV shows (single result, or exact title/year match; TV without a parsed year requires a single unambiguous result). See ADR-0007. The TUI identify overlay remains available for manual override, now with auto-search on open and an apply-and-next review loop.
 2. **TVDB rate limiter shape**: `TvdbProvider` carries the Python `MAX_RPS = 2` constant but does not add a separate limiter because the Python implementation does not either. TMDB uses `RateLimiter`.
 3. **TVDB `language` field unused**: Stored for API parity but not sent in requests, matching Python.
 4. **Live online tests are release validation**: TMDB/TVDB providers are not unit-tested against live APIs by default because they require API keys and network. Cache and cache-backed provider confirmation are tested locally.
 5. **No `close()` method**: Rust `reqwest::Client` is `Clone`/`Arc` internally; no explicit close needed.
+6. **Batch identification reuses one provider manager**: `BatchIdentifier` opens the provider cache once per batch; Python opened the manager per identify call.
 
 ## Dependencies Added
 

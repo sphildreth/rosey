@@ -17,7 +17,7 @@ use rosey_core::{
 use rosey_fs::{
     move_with_sidecars_journaled, scan_with_progress, OperationJournal, ScanOptions, ScanResult,
 };
-use rosey_metadata::{identify_file_with_metadata, ProviderManager};
+use rosey_metadata::{BatchIdentifier, ProviderManager};
 use std::{
     fs,
     sync::mpsc::{self, Receiver, TryRecvError},
@@ -26,7 +26,8 @@ use std::{
 };
 
 use app::{
-    AppState, IdentifiedItem, ManualProviderResult, Screen, SortColumn, TransferItem, TransferState,
+    AppState, IdentifiedItem, ManualEditTarget, ManualProviderResult, Screen, SortColumn,
+    TransferItem, TransferState,
 };
 
 fn main() -> Result<()> {
@@ -198,6 +199,13 @@ fn run_app(
                                 );
                                 continue;
                             }
+                            let scan_target = match &app.manual_edit {
+                                Some(edit) => match edit.target {
+                                    ManualEditTarget::Scanned { scan_index } => Some(scan_index),
+                                    ManualEditTarget::Planned { .. } => None,
+                                },
+                                None => None,
+                            };
                             if app.has_manual_provider_selection() {
                                 app.apply_manual_provider_selection();
                                 app.add_log("Provider identification applied");
@@ -205,6 +213,30 @@ fn run_app(
                                 app.apply_manual_edit();
                                 app.add_log("Manual identification applied");
                             }
+
+                            if let Some(applied_scan_index) = scan_target {
+                                if app.begin_review_next_unresolved(applied_scan_index) {
+                                    let next = app
+                                        .manual_edit
+                                        .as_ref()
+                                        .map(|edit| match edit.target {
+                                            ManualEditTarget::Scanned { scan_index } => app
+                                                .scan_results
+                                                .get(scan_index)
+                                                .map(|result| result.path.to_string())
+                                                .unwrap_or_default(),
+                                            ManualEditTarget::Planned { .. } => String::new(),
+                                        })
+                                        .unwrap_or_default();
+                                    app.add_log(format!("Review continuing with {next}"));
+                                    if let Some(rx) = start_manual_provider_search(app) {
+                                        worker_rx = Some(rx);
+                                    }
+                                    continue;
+                                }
+                                app.add_log("Review finished: no more unresolved scanned files");
+                            }
+
                             app.set_operation(
                                 "Identification updated",
                                 "Identification changes were applied.",
@@ -256,7 +288,7 @@ fn run_app(
                     match key.code {
                         KeyCode::Char('y') | KeyCode::Char('Y') => {
                             app.show_confirmation = false;
-                            worker_rx = Some(start_move(app));
+                            worker_rx = start_move(app);
                             app.add_log("Move confirmed and executed");
                         }
                         KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
@@ -367,7 +399,7 @@ fn run_app(
                                 "Move blocked: conflict policy is Ask and destination conflicts exist",
                             );
                         } else if app.dry_run {
-                            worker_rx = Some(start_move(app));
+                            worker_rx = start_move(app);
                         } else {
                             app.show_confirmation = true;
                         }
@@ -411,16 +443,40 @@ fn run_app(
                             && !app.is_busy() =>
                     {
                         app.begin_manual_edit();
+                        if let Some(rx) = start_manual_provider_search(app) {
+                            worker_rx = Some(rx);
+                        }
                     }
                     KeyCode::Char('i')
                         if app.current_screen == Screen::ScanResults && !app.is_busy() =>
                     {
                         match app.begin_manual_edit_from_scan() {
-                            Ok(()) => app.add_log("Manual identify opened for scanned file"),
+                            Ok(()) => {
+                                app.add_log("Manual identify opened for scanned file");
+                                if let Some(rx) = start_manual_provider_search(app) {
+                                    worker_rx = Some(rx);
+                                }
+                            }
                             Err(err) => {
                                 app.add_log(format!("Manual identify unavailable: {err}"));
                                 app.set_operation("Identify unavailable", err);
                             }
+                        }
+                    }
+                    KeyCode::Char('n')
+                        if app.current_screen == Screen::PlanPreview
+                            && !app.is_busy()
+                            && app.needs_review_count() > 0 =>
+                    {
+                        if app.select_next_needs_review() {
+                            let detail = app
+                                .selected_plan_item()
+                                .map(|item| item.media_item.source_path.to_string())
+                                .unwrap_or_default();
+                            app.set_operation(
+                                "Needs review",
+                                format!("{detail} is below the confidence threshold; press i to fix it."),
+                            );
                         }
                     }
                     KeyCode::Delete
@@ -673,6 +729,7 @@ fn start_plan(app: &mut AppState) -> Option<Receiver<WorkerMessage>> {
         let started = Instant::now();
         tracing::debug!(total, threshold, "plan worker started");
         let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().ok();
+        let identifier = BatchIdentifier::new(&config);
         let mut items = Vec::new();
         let mut processed = 0;
 
@@ -683,22 +740,17 @@ fn start_plan(app: &mut AppState) -> Option<Receiver<WorkerMessage>> {
 
             processed += 1;
             let ident = if let Some(runtime) = runtime.as_ref() {
-                runtime.block_on(identify_file_with_metadata(
-                    &scan_result.path,
-                    &config,
-                    IdentifyOptions { skip_duration: true },
-                ))
+                runtime.block_on(
+                    identifier.identify(&scan_result.path, IdentifyOptions { skip_duration: true }),
+                )
             } else {
                 rosey_core::identify_file_fast(&scan_result.path, &config)
             };
             let score = score_identification_result(&ident);
             let item = ident.item;
             let title = item.title.clone().unwrap_or_default();
-            let destination = if score.confidence >= threshold {
-                Some(plan_path(&item, movies_root.as_str(), tv_root.as_str()))
-            } else {
-                None
-            };
+            let destination = plan_path(&item, movies_root.as_str(), tv_root.as_str());
+            let needs_review = score.confidence < threshold;
 
             tracing::debug!(
                 source = %scan_result.path,
@@ -707,12 +759,19 @@ fn start_plan(app: &mut AppState) -> Option<Receiver<WorkerMessage>> {
                 year = item.year,
                 confidence = score.confidence,
                 threshold,
-                kept = destination.is_some(),
+                needs_review,
                 errors = ident.errors.len(),
                 "planned candidate evaluated"
             );
 
-            if let Some(destination) = destination {
+            if needs_review {
+                tracing::debug!(
+                    source = %scan_result.path,
+                    destination = %destination,
+                    confidence = score.confidence,
+                    "planned candidate queued for review"
+                );
+            } else {
                 tracing::debug!(
                     source = %scan_result.path,
                     destination = %destination,
@@ -720,13 +779,14 @@ fn start_plan(app: &mut AppState) -> Option<Receiver<WorkerMessage>> {
                     confidence = score.confidence,
                     "planned candidate kept"
                 );
-                items.push(IdentifiedItem { media_item: item, score, destination });
             }
+            items
+                .push(IdentifiedItem::planned(item, score, destination).needs_review(needs_review));
 
             let _ = tx.send(WorkerMessage::PlanProgress {
                 processed,
                 total,
-                kept: items.len(),
+                kept: items.iter().filter(|candidate| !candidate.needs_review).count(),
                 current: scan_result.path,
             });
         }
@@ -777,11 +837,33 @@ fn maybe_start_auto_plan(app: &mut AppState, worker_rx: &mut Option<Receiver<Wor
     }
 }
 
-fn start_move(app: &mut AppState) -> Receiver<WorkerMessage> {
-    let items: Vec<IdentifiedItem> = app.identified_items.clone();
+fn start_move(app: &mut AppState) -> Option<Receiver<WorkerMessage>> {
+    let items: Vec<IdentifiedItem> =
+        app.identified_items.iter().filter(|item| !item.needs_review).cloned().collect();
+    let review_count = app.identified_items.len() - items.len();
+
+    if items.is_empty() {
+        app.set_operation(
+            "Move skipped",
+            if review_count > 0 {
+                format!(
+                    "All {review_count} planned item(s) need review. Fix low-confidence identifications before moving."
+                )
+            } else {
+                "No planned items to move.".to_string()
+            },
+        );
+        app.add_log("Move skipped: nothing above the confidence threshold is planned");
+        return None;
+    }
+
     let conflict_policy = app.conflict_policy;
     let dry_run = app.dry_run;
     let total = items.len();
+
+    if review_count > 0 {
+        app.add_log(format!("Move excludes {review_count} item(s) below the confidence threshold"));
+    }
 
     app.transfer_queue = items
         .iter()
@@ -883,7 +965,7 @@ fn start_move(app: &mut AppState) -> Receiver<WorkerMessage> {
         });
     });
 
-    rx
+    Some(rx)
 }
 
 fn start_manual_provider_search(app: &mut AppState) -> Option<Receiver<WorkerMessage>> {
@@ -1005,7 +1087,10 @@ fn start_manual_provider_search(app: &mut AppState) -> Option<Receiver<WorkerMes
 }
 
 fn has_destination_conflicts(app: &AppState) -> bool {
-    app.identified_items.iter().any(IdentifiedItem::destination_file_exists)
+    app.identified_items
+        .iter()
+        .filter(|item| !item.needs_review)
+        .any(IdentifiedItem::destination_file_exists)
 }
 
 fn drain_worker_messages(app: &mut AppState, worker_rx: &mut Option<Receiver<WorkerMessage>>) {
@@ -1089,6 +1174,7 @@ fn handle_worker_message(app: &mut AppState, message: WorkerMessage) -> bool {
         }
         WorkerMessage::PlanComplete { items, processed, elapsed } => {
             let duplicate_count = items.iter().filter(|item| item.is_likely_duplicate()).count();
+            let review_count = items.iter().filter(|item| item.needs_review).count();
             app.identified_items = items;
             app.rebuild_filtered();
             app.selected_index = 0;
@@ -1102,15 +1188,16 @@ fn handle_worker_message(app: &mut AppState, message: WorkerMessage) -> bool {
             app.set_operation(
                 "Planning complete",
                 plan_complete_detail(
-                    app.identified_items.len(),
+                    app.identified_items.len() - review_count,
+                    review_count,
                     processed,
                     duplicate_count,
                     elapsed,
                 ),
             );
             app.add_log(format!(
-                "Planning complete: {} items identified, {} possible duplicate(s) in {}",
-                app.identified_items.len(),
+                "Planning complete: {} item(s) planned, {review_count} need review, {} possible duplicate(s) in {}",
+                app.identified_items.len() - review_count,
                 duplicate_count,
                 format_duration(elapsed)
             ));
@@ -1397,6 +1484,7 @@ fn format_duration(duration: Duration) -> String {
 
 fn plan_complete_detail(
     item_count: usize,
+    review_count: usize,
     processed: usize,
     duplicate_count: usize,
     elapsed: Duration,
@@ -1406,8 +1494,13 @@ fn plan_complete_detail(
     } else {
         String::new()
     };
+    let review_suffix = if review_count > 0 {
+        format!(", {review_count} need review (press n)")
+    } else {
+        String::new()
+    };
     format!(
-        "{item_count} items identified from {processed} files{duplicate_suffix} in {}",
+        "{item_count} items planned from {processed} files{review_suffix}{duplicate_suffix} in {}",
         format_duration(elapsed)
     )
 }
@@ -1416,7 +1509,7 @@ fn plan_complete_detail(
 mod tests {
     use super::*;
     use camino::Utf8PathBuf;
-    use rosey_core::RoseyConfig;
+    use rosey_core::{MediaItem, RoseyConfig, Score};
     use rosey_fs::ScanResult;
     use std::time::Duration;
 
@@ -1482,5 +1575,153 @@ mod tests {
             }
             std::thread::sleep(Duration::from_millis(5));
         }
+    }
+
+    #[test]
+    fn move_skips_items_below_confidence_threshold() {
+        let mut app = test_app(Utf8PathBuf::from("/source"));
+        app.identified_items.push(
+            IdentifiedItem::planned(
+                MediaItem::unknown(Utf8PathBuf::from("/source/Clip.mkv")),
+                Score { confidence: 10, reasons: Vec::new() },
+                Utf8PathBuf::from("/movies/Clip.mkv"),
+            )
+            .needs_review(true),
+        );
+        app.dry_run = true;
+
+        assert_eq!(app.needs_review_count(), 1);
+        assert!(start_move(&mut app).is_none());
+        assert!(app.transfer_queue.is_empty());
+        assert!(!app.transfer_running);
+    }
+
+    #[test]
+    fn destination_conflicts_ignore_needs_review_items() {
+        let mut app = test_app(Utf8PathBuf::from("/source"));
+        app.identified_items.push(
+            IdentifiedItem::planned(
+                MediaItem::unknown(Utf8PathBuf::from("/source/Clip.mkv")),
+                Score { confidence: 10, reasons: Vec::new() },
+                Utf8PathBuf::from("/definitely/not/a/real/media/path/Clip.mkv"),
+            )
+            .needs_review(true),
+        );
+
+        assert!(!has_destination_conflicts(&app));
+    }
+
+    #[test]
+    fn plan_complete_detail_reports_review_count() {
+        let detail = plan_complete_detail(2, 1, 3, 0, Duration::from_millis(1500));
+
+        assert!(detail.contains("2 items planned from 3 files"));
+        assert!(detail.contains("1 need review"));
+    }
+
+    #[test]
+    fn select_next_needs_review_moves_selection() {
+        let mut app = test_app(Utf8PathBuf::from("/source"));
+        app.identified_items.push(
+            IdentifiedItem::planned(
+                MediaItem::unknown(Utf8PathBuf::from("/source/Good.mkv")),
+                Score { confidence: 90, reasons: Vec::new() },
+                Utf8PathBuf::from("/movies/Good.mkv"),
+            )
+            .needs_review(false),
+        );
+        app.identified_items.push(
+            IdentifiedItem::planned(
+                MediaItem::unknown(Utf8PathBuf::from("/source/Weak.mkv")),
+                Score { confidence: 10, reasons: Vec::new() },
+                Utf8PathBuf::from("/movies/Weak.mkv"),
+            )
+            .needs_review(true),
+        );
+        app.rebuild_filtered();
+        app.selected_index = 0;
+
+        assert!(app.select_next_needs_review());
+        assert!(app.selected_plan_item().is_some_and(|item| item.needs_review));
+        assert_eq!(app.needs_review_count(), 1);
+    }
+
+    #[test]
+    fn review_next_unresolved_skips_resolved_and_non_video_files() {
+        let mut app = test_app(Utf8PathBuf::from("/source"));
+        app.confidence_threshold = 40;
+        app.scan_results.push(ScanResult {
+            path: Utf8PathBuf::from("/source/Resolved.mkv"),
+            is_video: true,
+            size_bytes: 1_000,
+            error: None,
+        });
+        app.scan_results.push(ScanResult {
+            path: Utf8PathBuf::from("/source/notes.txt"),
+            is_video: false,
+            size_bytes: 10,
+            error: None,
+        });
+        app.scan_results.push(ScanResult {
+            path: Utf8PathBuf::from("/source/Broken.mkv"),
+            is_video: true,
+            size_bytes: 1_000,
+            error: Some("unreadable".to_string()),
+        });
+        app.scan_results.push(ScanResult {
+            path: Utf8PathBuf::from("/source/Unresolved.mkv"),
+            is_video: true,
+            size_bytes: 1_000,
+            error: None,
+        });
+        app.identified_items.push(
+            IdentifiedItem::planned(
+                MediaItem::unknown(Utf8PathBuf::from("/source/Resolved.mkv")),
+                Score { confidence: 90, reasons: Vec::new() },
+                Utf8PathBuf::from("/movies/Resolved.mkv"),
+            )
+            .needs_review(false),
+        );
+
+        assert!(app.begin_review_next_unresolved(0));
+        assert!(matches!(
+            &app.manual_edit.as_ref().expect("overlay open").target,
+            ManualEditTarget::Scanned { scan_index } if *scan_index == 3
+        ));
+        assert_eq!(app.selected_scan_index, 3);
+
+        assert!(!app.begin_review_next_unresolved(3));
+    }
+
+    #[test]
+    fn review_next_unresolved_treats_low_confidence_as_unresolved() {
+        let mut app = test_app(Utf8PathBuf::from("/source"));
+        app.confidence_threshold = 40;
+        app.scan_results.push(ScanResult {
+            path: Utf8PathBuf::from("/source/Weak.mkv"),
+            is_video: true,
+            size_bytes: 1_000,
+            error: None,
+        });
+        app.scan_results.push(ScanResult {
+            path: Utf8PathBuf::from("/source/Next.mkv"),
+            is_video: true,
+            size_bytes: 1_000,
+            error: None,
+        });
+        app.identified_items.push(
+            IdentifiedItem::planned(
+                MediaItem::unknown(Utf8PathBuf::from("/source/Weak.mkv")),
+                Score { confidence: 10, reasons: Vec::new() },
+                Utf8PathBuf::from("/movies/Weak.mkv"),
+            )
+            .needs_review(true),
+        );
+
+        assert!(app.begin_review_next_unresolved(0));
+        assert!(matches!(
+            &app.manual_edit.as_ref().expect("overlay open").target,
+            ManualEditTarget::Scanned { scan_index } if *scan_index == 1
+        ));
     }
 }

@@ -13,7 +13,7 @@ use rosey_fs::{
     format_bytes, index_movie_library, move_show, move_with_sidecars, MovieLibraryIndexOptions,
     Scanner,
 };
-use rosey_metadata::{identify_file_with_metadata, ProviderManager};
+use rosey_metadata::{BatchIdentifier, ProviderManager};
 use serde::Serialize;
 use std::path::PathBuf;
 
@@ -126,6 +126,7 @@ struct RunOutput {
     green: Vec<RunResultItem>,
     yellow: Vec<RunResultItem>,
     red: Vec<RunResultItem>,
+    needs_review: Vec<RunResultItem>,
     dry_run: bool,
     moved: usize,
     errors: Vec<String>,
@@ -184,7 +185,7 @@ async fn main() -> Result<()> {
         Commands::Identify { path, json } => {
             tracing::info!(path = %path, json, "cli identify started");
             let ident =
-                identify_file_with_metadata(&path, &config, IdentifyOptions::default()).await;
+                BatchIdentifier::new(&config).identify(&path, IdentifyOptions::default()).await;
             let item = ident.item;
             let nfo_path = rosey_core::find_nfo_for_file(&path);
             tracing::debug!(
@@ -383,14 +384,12 @@ async fn main() -> Result<()> {
             }
 
             let mut results: Vec<RunResultItem> = Vec::new();
+            let mut needs_review: Vec<RunResultItem> = Vec::new();
+            let identifier = BatchIdentifier::new(&config);
 
             for scan_result in &video_files {
-                let ident = identify_file_with_metadata(
-                    &scan_result.path,
-                    &config,
-                    IdentifyOptions::default(),
-                )
-                .await;
+                let ident =
+                    identifier.identify(&scan_result.path, IdentifyOptions::default()).await;
                 let score = score_identification_result(&ident);
                 let item = ident.item;
                 tracing::debug!(
@@ -404,16 +403,6 @@ async fn main() -> Result<()> {
                     "cli run identified candidate"
                 );
 
-                if score.confidence < confidence {
-                    tracing::debug!(
-                        source = %scan_result.path,
-                        confidence = score.confidence,
-                        threshold = confidence,
-                        "cli run skipped candidate below confidence threshold"
-                    );
-                    continue;
-                }
-
                 let destination = rosey_core::plan_path(
                     &item,
                     movies_target.as_ref().map(|p| p.as_str()).unwrap_or(""),
@@ -425,6 +414,17 @@ async fn main() -> Result<()> {
                     confidence = score.confidence,
                     "cli run planned candidate"
                 );
+
+                if score.confidence < confidence {
+                    tracing::debug!(
+                        source = %scan_result.path,
+                        confidence = score.confidence,
+                        threshold = confidence,
+                        "cli run queued candidate for review"
+                    );
+                    needs_review.push(RunResultItem { item, score, destination });
+                    continue;
+                }
 
                 results.push(RunResultItem { item, score, destination });
             }
@@ -449,6 +449,7 @@ async fn main() -> Result<()> {
                     green: green.clone(),
                     yellow: yellow.clone(),
                     red: red.clone(),
+                    needs_review: needs_review.clone(),
                     dry_run: actually_dry_run,
                     moved: 0,
                     errors: Vec::new(),
@@ -472,6 +473,27 @@ async fn main() -> Result<()> {
                         println!("  Reasons: {}", item.score.reasons.join("; "));
                     }
                     println!();
+                }
+
+                if !needs_review.is_empty() {
+                    println!(
+                        "Needs review: {} item(s) below the confidence threshold",
+                        needs_review.len()
+                    );
+                    println!();
+                    for item in &needs_review {
+                        println!(
+                            "[REVIEW] {:3}% | {}",
+                            item.score.confidence,
+                            format_item_info(&item.item)
+                        );
+                        println!("  Source: {}", item.item.source_path);
+                        println!("  Suggested dest: {}", item.destination);
+                        if !item.score.reasons.is_empty() {
+                            println!("  Reasons: {}", item.score.reasons.join("; "));
+                        }
+                        println!();
+                    }
                 }
             }
 

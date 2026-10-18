@@ -46,6 +46,11 @@ impl ProviderManager {
             Some(TvdbProvider::with_options(api_key, language, std::time::Duration::from_secs(10)));
     }
 
+    /// Whether the TMDB provider is configured for lookups.
+    pub fn has_tmdb(&self) -> bool {
+        self.tmdb.is_some()
+    }
+
     /// Search for movies.
     pub async fn search_movie(
         &self,

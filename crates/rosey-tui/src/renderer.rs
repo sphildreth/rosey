@@ -421,11 +421,17 @@ fn render_plan_preview(frame: &mut Frame, app: &AppState, area: Rect) {
                 MediaKind::Unknown => "?",
             };
 
+            let title = if item.needs_review {
+                format!("~ {}", item.media_item.title.as_deref().unwrap_or("?"))
+            } else {
+                item.media_item.title.as_deref().unwrap_or("?").to_string()
+            };
+
             Row::new(vec![
                 Cell::from(format!("{:3}%", item.score.confidence)).style(style),
                 duplicate_indicator_cell(app, item),
                 Cell::from(kind_str),
-                Cell::from(item.media_item.title.as_deref().unwrap_or("?")),
+                Cell::from(title),
                 Cell::from(
                     item.media_item.year.map(|y| y.to_string()).unwrap_or_else(|| "-".to_string()),
                 ),
@@ -1097,6 +1103,10 @@ fn render_help(frame: &mut Frame, app: &AppState, area: Rect) {
             Span::raw("Search providers from manual identify"),
         ]),
         Line::from(vec![
+            Span::styled("n  ", app.theme.key),
+            Span::raw("Jump to next plan item that needs review (~ marker)"),
+        ]),
+        Line::from(vec![
             Span::styled("r  ", app.theme.key),
             Span::raw("Inspect last move journal on Logs / Recovery"),
         ]),
@@ -1616,6 +1626,7 @@ mod tests {
             },
             score: Score { confidence: 80, reasons: Vec::new() },
             destination: Utf8PathBuf::from("/movies/Movie (2020)/Movie.mkv"),
+            needs_review: false,
         });
 
         let text = render_text(&app);
@@ -1646,6 +1657,7 @@ mod tests {
             },
             score: Score { confidence: 80, reasons: Vec::new() },
             destination: Utf8PathBuf::from("/movies/Movie (2020)/Movie.mkv"),
+            needs_review: false,
         });
 
         let text = render_text(&app);
@@ -1718,6 +1730,7 @@ mod tests {
             },
             score: Score { confidence: 90, reasons: Vec::new() },
             destination: Utf8PathBuf::from("/movies/Movie (2020)/Movie.mkv"),
+            needs_review: false,
         });
         app.rebuild_filtered();
 
@@ -1751,6 +1764,7 @@ mod tests {
                 },
                 score: Score { confidence: 80, reasons: Vec::new() },
                 destination: Utf8PathBuf::from(format!("/movies/{title} (2020)/{title}.mkv")),
+                needs_review: false,
             });
         }
         app.rebuild_filtered();
@@ -1795,6 +1809,7 @@ mod tests {
             },
             score: Score { confidence: 90, reasons: Vec::new() },
             destination: duplicate_dir.join("Movie (2020).mkv"),
+            needs_review: false,
         });
         app.rebuild_filtered();
 
@@ -1827,6 +1842,7 @@ mod tests {
             },
             score: Score { confidence: 50, reasons: Vec::new() },
             destination: Utf8PathBuf::from("/movies/Movie (2020)/Movie.mkv"),
+            needs_review: false,
         });
         app.rebuild_filtered();
         app.begin_manual_edit();
@@ -1847,5 +1863,22 @@ mod tests {
 
         assert!(text.contains("Identify selected scan result or planned move"));
         assert!(text.contains("Search providers from manual identify"));
+        assert!(text.contains("Jump to next plan item that needs review"));
+    }
+
+    #[test]
+    fn help_documents_review_marker_and_next_jump() {
+        let mut app = test_app();
+        app.current_screen = Screen::Help;
+        app.identified_items.push(
+            IdentifiedItem::planned(
+                MediaItem::unknown(Utf8PathBuf::from("/source/Weak.mkv")),
+                Score { confidence: 10, reasons: Vec::new() },
+                Utf8PathBuf::from("/movies/Weak.mkv"),
+            )
+            .needs_review(true),
+        );
+
+        assert_eq!(app.needs_review_count(), 1);
     }
 }

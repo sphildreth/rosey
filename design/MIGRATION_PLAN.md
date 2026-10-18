@@ -105,6 +105,14 @@ Expected layout:
 - [x] add cache-backed parity tests for provider-enabled scoring behavior without network access
 - [x] document optional real-API smoke as release validation
 
+### Phase 9.1 — Automatic identification [COMPLETE]
+
+- [x] auto-select provider search results for TV shows (single result or exact title/year; no-year requires a single result) — see ADR-0007
+- [x] keep below-threshold items in a review queue instead of dropping them (TUI `needs_review`, CLI `rosey run --json` `needs_review`)
+- [x] TUI identify overlay auto-searches on open and applies-and-advances to the next unresolved file
+- [x] batch identification shares one provider manager/cache handle (`rosey_metadata::BatchIdentifier`)
+- [x] document confidence recalibration proposal (ADR-0008, not yet implemented)
+
 ### Phase 10 — Cutover [NOT STARTED]
 
 - [ ] freeze Python repo

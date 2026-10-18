@@ -11,13 +11,11 @@ permission:
     docs/**/*.md: allow
     AGENTS.md: ask
     .kilo/**/*.md: ask
-    *: deny
   bash: ask
   task: deny
   webfetch: ask
   websearch: ask
 ---
-
 
 # Rosey Docs and ADR Agent
 
@@ -75,7 +73,6 @@ Status:
 - Do not edit Rust code unless explicitly asked.
 - Keep prompts operational and narrow.
 - Do not claim implementation status unless verified.
-
 
 ## Required Completion Report
 

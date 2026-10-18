@@ -14,6 +14,9 @@ clippy:
 
 check: fmt clippy test
 
+prechecks:
+    python3 scripts/do-prechecks.py
+
 scan-example:
     cargo run -p rosey-cli -- scan . --json
 

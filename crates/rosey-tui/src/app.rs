@@ -66,9 +66,20 @@ pub struct IdentifiedItem {
     pub media_item: MediaItem,
     pub score: Score,
     pub destination: Utf8PathBuf,
+    #[serde(default)]
+    pub needs_review: bool,
 }
 
 impl IdentifiedItem {
+    pub fn planned(media_item: MediaItem, score: Score, destination: Utf8PathBuf) -> Self {
+        Self { media_item, score, destination, needs_review: false }
+    }
+
+    pub fn needs_review(mut self, needs_review: bool) -> Self {
+        self.needs_review = needs_review;
+        self
+    }
+
     pub fn destination_directory(&self) -> Option<&Utf8Path> {
         if self.destination == self.media_item.source_path {
             return None;
@@ -139,6 +150,9 @@ pub enum ManualField {
     Title,
     Year,
 }
+
+pub const SEARCH_ON_OPEN_STATUS: &str =
+    "Provider search runs automatically; edit criteria and press F5 to re-search.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsField {
@@ -543,6 +557,42 @@ impl AppState {
         self.sort_filtered();
     }
 
+    pub fn needs_review_count(&self) -> usize {
+        self.identified_items.iter().filter(|item| item.needs_review).count()
+    }
+
+    pub fn selected_plan_item(&self) -> Option<&IdentifiedItem> {
+        let &item_index = self.filtered_items.get(self.selected_index)?;
+        self.identified_items.get(item_index)
+    }
+
+    /// Advance the selection to the next needs-review item after the current
+    /// selection, wrapping around the filtered list.
+    ///
+    /// Returns true when the selection moved to a needs-review item.
+    pub fn select_next_needs_review(&mut self) -> bool {
+        if self.filtered_items.is_empty() {
+            return false;
+        }
+
+        let is_review = |index: usize| {
+            self.identified_items
+                .get(self.filtered_items[index])
+                .is_some_and(|item| item.needs_review)
+        };
+
+        let total = self.filtered_items.len();
+        for offset in 1..=total {
+            let candidate = (self.selected_index + offset) % total;
+            if is_review(candidate) {
+                self.selected_index = candidate;
+                return true;
+            }
+        }
+
+        false
+    }
+
     pub fn scan_previous_item(&mut self) {
         self.selected_scan_index = self.selected_scan_index.saturating_sub(1);
     }
@@ -732,7 +782,12 @@ impl AppState {
     }
 
     pub fn begin_manual_edit_from_scan(&mut self) -> Result<(), String> {
-        let Some(scan_result) = self.scan_results.get(self.selected_scan_index) else {
+        let scan_index = self.selected_scan_index;
+        self.begin_manual_edit_for_scan_index(scan_index)
+    }
+
+    pub fn begin_manual_edit_for_scan_index(&mut self, scan_index: usize) -> Result<(), String> {
+        let Some(scan_result) = self.scan_results.get(scan_index) else {
             return Err("No scanned file is selected.".to_string());
         };
 
@@ -751,7 +806,7 @@ impl AppState {
 
         let item = identify_file_fast(&scan_result.path, &self.config).item;
         self.manual_edit = Some(ManualEditState {
-            target: ManualEditTarget::Scanned { scan_index: self.selected_scan_index },
+            target: ManualEditTarget::Scanned { scan_index },
             field: ManualField::Title,
             kind: item.kind,
             title: item.title.clone().unwrap_or_else(|| {
@@ -760,9 +815,49 @@ impl AppState {
             year: item.year.map(|year| year.to_string()).unwrap_or_default(),
             provider_results: Vec::new(),
             provider_index: 0,
-            search_status: "Edit criteria, then press F5 to search providers.".to_string(),
+            search_status: SEARCH_ON_OPEN_STATUS.to_string(),
         });
         Ok(())
+    }
+
+    /// Open the identify overlay for the next scanned file that is still
+    /// unresolved (not identified, or identified below the confidence
+    /// threshold). Returns false when no unresolved file remains.
+    pub fn begin_review_next_unresolved(&mut self, after_scan_index: usize) -> bool {
+        let Some(next) = self.next_unresolved_scan_index(after_scan_index) else {
+            return false;
+        };
+
+        match self.begin_manual_edit_for_scan_index(next) {
+            Ok(()) => {
+                self.selected_scan_index = next;
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    fn scan_is_unresolved(&self, scan_index: usize) -> bool {
+        let Some(scan_result) = self.scan_results.get(scan_index) else {
+            return false;
+        };
+
+        if scan_result.error.is_some() || !scan_result.is_video {
+            return false;
+        }
+
+        match self
+            .identified_items
+            .iter()
+            .find(|item| item.media_item.source_path == scan_result.path)
+        {
+            Some(item) => item.score.confidence < self.confidence_threshold,
+            None => true,
+        }
+    }
+
+    pub fn next_unresolved_scan_index(&self, after: usize) -> Option<usize> {
+        (after + 1..self.scan_results.len()).find(|&index| self.scan_is_unresolved(index))
     }
 
     pub fn begin_manual_edit(&mut self) {
@@ -782,7 +877,7 @@ impl AppState {
             year: item.year.map(|year| year.to_string()).unwrap_or_default(),
             provider_results: Vec::new(),
             provider_index: 0,
-            search_status: "Edit criteria, then press F5 to search providers.".to_string(),
+            search_status: SEARCH_ON_OPEN_STATUS.to_string(),
         });
     }
 
@@ -940,7 +1035,9 @@ impl AppState {
         let movies_root = self.movies_target.as_ref().map(|path| path.as_str()).unwrap_or("");
         let tv_root = self.tv_target.as_ref().map(|path| path.as_str()).unwrap_or("");
         let destination = plan_path(&media_item, movies_root, tv_root);
-        let identified = IdentifiedItem { media_item, score, destination };
+        let needs_review = score.confidence < self.confidence_threshold;
+        let identified =
+            IdentifiedItem::planned(media_item, score, destination).needs_review(needs_review);
 
         match target {
             ManualEditTarget::Planned { item_index } => {
@@ -1328,6 +1425,7 @@ mod tests {
             },
             score: Score { confidence: 90, reasons: Vec::new() },
             destination: Utf8PathBuf::from("/movies/Movie (2020)/Movie (2020).mkv"),
+            needs_review: false,
         });
         app.rebuild_filtered();
 
@@ -1375,6 +1473,7 @@ mod tests {
             },
             score: Score { confidence: 90, reasons: Vec::new() },
             destination: Utf8PathBuf::from("/movies/Movie (2020)/Movie (2020).mkv"),
+            needs_review: false,
         });
         app.rebuild_filtered();
         app.pending_delete = Some(PendingDelete::PlanItem { item_index: 0 });
@@ -1426,6 +1525,7 @@ mod tests {
             },
             score: Score { confidence: 90, reasons: Vec::new() },
             destination: Utf8PathBuf::from("/movies/Movie (2020)/Movie (2020).mkv"),
+            needs_review: false,
         });
         app.rebuild_filtered();
 
@@ -1458,6 +1558,7 @@ mod tests {
             media_item,
             score: Score { confidence: 0, reasons: Vec::new() },
             destination: Utf8PathBuf::from("/old"),
+            needs_review: false,
         });
         app.rebuild_filtered();
         app.begin_manual_edit();
@@ -1528,6 +1629,7 @@ mod tests {
             media_item,
             score: Score { confidence: 0, reasons: Vec::new() },
             destination: Utf8PathBuf::from("/old"),
+            needs_review: false,
         });
         app.rebuild_filtered();
         app.begin_manual_edit();
