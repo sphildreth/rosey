@@ -97,12 +97,15 @@ fn build_manager(
     has_tmdb: bool,
     has_tvdb: bool,
 ) -> Result<ProviderManager, String> {
+    let cache_dir = metadata_cache_dir();
     let mut manager = ProviderManager::new(
-        metadata_cache_dir(),
+        &cache_dir,
         config.providers.cache_ttl_days,
         config.identification.use_online_providers,
     )
-    .map_err(|_| "Failed to initialize metadata provider cache".to_string())?;
+    .map_err(|error| {
+        format!("Failed to initialize metadata provider cache at {}: {error}", cache_dir.display())
+    })?;
 
     if has_tmdb {
         manager.configure_tmdb(
@@ -466,6 +469,51 @@ mod tests {
         assert_eq!(result.item.title.as_deref(), Some("The Matrix"));
         assert_eq!(result.item.nfo.get("tmdbid").and_then(|id| id.as_deref()), Some("603"));
         assert!(result.reasons.iter().any(|r| r.contains("TMDB ID from directory name")));
+    }
+
+    #[test]
+    fn unsupported_cache_without_migrator_still_identifies_from_session_cache() {
+        let _guard = env_lock();
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let _env = set_env_var(config_env_key(), temp_dir.path());
+        let _migrator =
+            set_env_var("ROSEY_DECENTDB_MIGRATE", &temp_dir.path().join("missing-migrator"));
+        let _reset = set_env_var("ROSEY_DECENTDB_RESET_ON_UNSUPPORTED", std::path::Path::new("0"));
+        let cache_path = metadata_cache_dir().join("provider_cache.ddb");
+        drop(ProviderCache::open(&cache_path, 30).unwrap());
+        // Mark a disposable database as an unsupported format to exercise migration failure.
+        let mut original = std::fs::read(&cache_path).unwrap();
+        original[16..20].copy_from_slice(&11_u32.to_le_bytes());
+        std::fs::write(&cache_path, &original).unwrap();
+        let wal_path = cache_path.with_extension("ddb.wal");
+        let original_wal = std::fs::read(&wal_path).unwrap();
+
+        let runtime = runtime();
+        let config = provider_enabled_config();
+        let identifier = runtime.block_on(async { BatchIdentifier::new(&config) });
+        identifier
+            .manager
+            .as_ref()
+            .expect("an unavailable disk cache must not disable providers")
+            .cache
+            .set(
+                "tmdb",
+                "movie",
+                "603",
+                &json!({"id": 603, "title": "The Matrix", "release_date": "1999-03-31"}),
+            )
+            .unwrap();
+
+        let result = runtime.block_on(identifier.identify(
+            Utf8Path::new("/media/[tmdbid-603] The Matrix (1999).mkv"),
+            IdentifyOptions { skip_duration: true },
+        ));
+
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        assert_eq!(result.item.title.as_deref(), Some("The Matrix"));
+        assert!(result.reasons.iter().any(|reason| reason.contains("definitive movie")));
+        assert_eq!(std::fs::read(&cache_path).unwrap(), original);
+        assert_eq!(std::fs::read(&wal_path).unwrap(), original_wal);
     }
 
     #[test]

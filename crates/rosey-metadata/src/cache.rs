@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const DECENTDB_MIGRATE_BIN_ENV: &str = "ROSEY_DECENTDB_MIGRATE";
 const DECENTDB_RESET_ON_UNSUPPORTED_ENV: &str = "ROSEY_DECENTDB_RESET_ON_UNSUPPORTED";
 
-/// Disk-backed cache for provider metadata.
+/// Cache for provider metadata, backed by disk or session memory.
 ///
 /// Mirrors Python `ProviderCache` from `rosey/providers/cache.py`.
 pub struct ProviderCache {
@@ -23,7 +23,15 @@ impl ProviderCache {
                 .map_err(|err| DbError::io("failed to create cache directory", err))?;
         }
 
-        let db = open_or_update_db(&db_path)?;
+        Self::from_db(open_or_update_db(&db_path)?, ttl_days)
+    }
+
+    /// Create a session-only cache without touching the filesystem.
+    pub fn in_memory(ttl_days: u32) -> decentdb::Result<Self> {
+        Self::from_db(Db::open_or_create(":memory:", DbConfig::default())?, ttl_days)
+    }
+
+    fn from_db(db: Db, ttl_days: u32) -> decentdb::Result<Self> {
         db.execute(
             "CREATE TABLE IF NOT EXISTS cache (
                 provider TEXT NOT NULL,
@@ -196,7 +204,12 @@ fn migrate_decentdb_file(path: &Path, original_error: DbError) -> decentdb::Resu
         .arg("--dest")
         .arg(&migrating_path)
         .output()
-        .map_err(|source| DbError::io("failed to run decentdb-migrate", source))?;
+        .map_err(|source| {
+            DbError::io(
+                format!("failed to run decentdb-migrate after {original_error}: {source}"),
+                source,
+            )
+        })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

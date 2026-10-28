@@ -15,13 +15,32 @@ pub struct ProviderManager {
 }
 
 impl ProviderManager {
-    /// Create a new manager. Online lookups are disabled by default.
+    /// Create a manager, using a session-only cache if the disk cache cannot open.
+    /// Online lookups are controlled by `enabled`.
     pub fn new(
         cache_dir: impl AsRef<Path>,
         cache_ttl_days: u32,
         enabled: bool,
     ) -> decentdb::Result<Self> {
-        let cache = ProviderCache::open(cache_dir, cache_ttl_days)?;
+        let cache_dir = cache_dir.as_ref();
+        let cache = match ProviderCache::open(cache_dir, cache_ttl_days) {
+            Ok(cache) => cache,
+            Err(error) => {
+                tracing::warn!(
+                    path = %cache_dir.display(),
+                    error = %error,
+                    source = ?std::error::Error::source(&error),
+                    "Provider disk cache unavailable; using a session-only cache"
+                );
+                ProviderCache::in_memory(cache_ttl_days).map_err(|fallback_error| {
+                    decentdb::DbError::internal(format!(
+                        "failed to open provider cache at {}: {error}; \
+                         session-only cache also failed: {fallback_error}",
+                        cache_dir.display()
+                    ))
+                })?
+            }
+        };
         Ok(Self { cache, enabled, tmdb: None, tvdb: None })
     }
 
@@ -419,6 +438,37 @@ fn year_from_date(date: &str) -> Option<u16> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn unavailable_cache_directory_keeps_provider_search_working() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cache_dir = temp_dir.path().join("blocked");
+        std::fs::write(&cache_dir, "not a directory").unwrap();
+
+        let mut manager = ProviderManager::new(&cache_dir, 30, true).unwrap();
+        manager.configure_tmdb("test-key", "en-US", "US");
+        let results = json!([{"id": 603, "title": "The Matrix"}]);
+        manager.cache.set("tmdb", "search_movie", "The Matrix_1999", &results).unwrap();
+
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let matches = runtime.block_on(manager.search_movie_all("The Matrix", Some(1999), true));
+
+        assert_eq!(matches, vec![("tmdb".to_string(), results[0].clone())]);
+        assert_eq!(std::fs::read_to_string(cache_dir).unwrap(), "not a directory");
+    }
+
+    #[test]
+    fn healthy_cache_persists_between_managers() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let data = json!({"id": 603, "title": "The Matrix"});
+        {
+            let manager = ProviderManager::new(temp_dir.path(), 30, true).unwrap();
+            manager.cache.set("tmdb", "movie", "603", &data).unwrap();
+        }
+
+        let manager = ProviderManager::new(temp_dir.path(), 30, true).unwrap();
+        assert_eq!(manager.cache.get("tmdb", "movie", "603"), Some(data));
+    }
 
     #[test]
     fn cached_find_resolves_imdb_name_to_tmdb_person() {

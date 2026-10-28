@@ -39,6 +39,30 @@ fn cache_set_and_get() {
 }
 
 #[test]
+fn session_cache_supports_lookups_and_clearing() {
+    let cache = ProviderCache::in_memory(30).unwrap();
+    let data = serde_json::json!({"title": "The Matrix", "year": 1999});
+
+    cache.set("tmdb", "movie", "603", &data).unwrap();
+
+    assert_eq!(cache.get("tmdb", "movie", "603"), Some(data));
+    assert_eq!(cache.stats().unwrap().total, 1);
+    assert_eq!(cache.clear_expired().unwrap(), 0);
+    cache.clear_all().unwrap();
+    assert!(cache.get("tmdb", "movie", "603").is_none());
+    assert_eq!(cache.stats().unwrap().total, 0);
+}
+
+#[test]
+fn session_caches_are_independent() {
+    let first = ProviderCache::in_memory(30).unwrap();
+    first.set("tmdb", "movie", "603", &serde_json::json!({"id": 603})).unwrap();
+
+    let second = ProviderCache::in_memory(30).unwrap();
+    assert!(second.get("tmdb", "movie", "603").is_none());
+}
+
+#[test]
 fn cache_get_missing_returns_none() {
     let (_tmp, path) = temp_db();
     let cache = ProviderCache::open(&path, 30).unwrap();

@@ -1019,13 +1019,18 @@ fn start_manual_provider_search(app: &mut AppState) -> Option<Receiver<WorkerMes
 
         let search_title = title.clone();
         let results = runtime.block_on(async move {
-            let Ok(mut manager) = ProviderManager::new(
-                metadata_cache_dir(),
+            let cache_dir = metadata_cache_dir();
+            let mut manager = ProviderManager::new(
+                &cache_dir,
                 config.providers.cache_ttl_days,
                 config.identification.use_online_providers,
-            ) else {
-                return Err("Failed to initialize metadata provider cache".to_string());
-            };
+            )
+            .map_err(|error| {
+                format!(
+                    "Failed to initialize metadata provider cache at {}: {error}",
+                    cache_dir.display()
+                )
+            })?;
 
             if !config.providers.tmdb_api_key.trim().is_empty() {
                 manager.configure_tmdb(

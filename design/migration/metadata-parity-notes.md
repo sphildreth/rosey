@@ -35,6 +35,7 @@ Complete for the provider, cache, and application integration surface used by th
 - **Operations**: `get`, `set`, `clear_expired`, `clear_all`, `stats`
 - **Parameter binding**: Uses `$1`, `$2`, etc. positional parameters for safety (no string interpolation for user-controlled values)
 - **Format updates**: Cache open retries unsupported DecentDB file formats through `decentdb-migrate`, writing a temporary `.migrating` file, preserving a `.backup`, and reopening the migrated database
+- **Session fallback**: If the disk cache cannot open or initialize, `ProviderManager` logs the path and underlying error and uses an independent in-memory cache with the same schema and TTL. Identify and provider searches remain available without automatic cache deletion. See [ADR-0009](../adr/0009-provider-cache-fallback.md).
 
 ## Provider Manager
 
@@ -54,12 +55,12 @@ Complete for the provider, cache, and application integration surface used by th
 ## Dependencies Added
 
 - `reqwest = { version = "0.13", features = ["json", "query"] }` — HTTP client
-- `decentdb` pinned to `v2.7.0` — embedded cache database
+- `decentdb` pinned to `v2.18.0` — embedded cache database
 - `tokio` (already present) — async runtime
 
 ## Test Coverage
 
-- 8 cache tests in `crates/rosey-metadata/tests/cache_tests.rs`:
+- Cache tests in `crates/rosey-metadata/tests/cache_tests.rs`:
   - `cache_open_creates_schema`
   - `cache_open_accepts_python_style_directory`
   - `cache_set_and_get`
@@ -68,12 +69,16 @@ Complete for the provider, cache, and application integration surface used by th
   - `cache_clear_all`
   - `cache_clear_expired_returns_removed_count`
   - `cache_stats_counts_entries`
+  - session caches support lookups, clearing, and independent lifetimes
 
 All cache tests use `tempfile::tempdir()` — no real user paths touched.
 
 - Identifier provider tests in `crates/rosey-metadata/src/identifier.rs`:
   - disabled providers keep path TMDB IDs unconfirmed
   - cache-backed TMDB movie confirmation updates item metadata and confidence without network access
+  - an unsupported cache and unavailable migrator preserve the original database/WAL and allow provider confirmation through a session cache
+
+- Manager tests cover an unusable cache directory and healthy persistent-cache reuse.
 
 ## Quality Gates
 
@@ -89,7 +94,7 @@ Add optional live-provider smoke tests gated on `TMDB_API_KEY` / `TVDB_API_KEY` 
 ## DecentDB Update Process
 
 - Bump the workspace `decentdb` Git tag when Rosey should track a new DecentDB release.
-- Keep `decentdb-migrate` available in `PATH`, or point `ROSEY_DECENTDB_MIGRATE` at the matching tool binary.
+- Keep `decentdb-migrate` available in `PATH`, or point `ROSEY_DECENTDB_MIGRATE` at the matching tool binary. If it is unavailable or migration fails, provider lookups continue with a session-only cache and log the failure.
 - On `UnsupportedFormatVersion`, Rosey attempts an in-place update workflow using `provider_cache.ddb.migrating` and `provider_cache.ddb.backup`, then retries opening the cache.
 - For disposable beta cache resets, `ROSEY_DECENTDB_RESET_ON_UNSUPPORTED=1` removes the unsupported cache file and recreates it instead of running the update tool.
 

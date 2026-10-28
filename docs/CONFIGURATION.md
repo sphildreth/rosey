@@ -78,6 +78,13 @@ The TUI reads configured source, movie target, TV target, theme, dry-run mode, c
 
 The CLI reads configured source and target paths, scan concurrency, symlink behavior, conflict policy, confidence bands, identification settings, title remove segments, and provider settings. `rosey-cli doctor` reports configuration and system readiness, with `--json` for machine-readable output. `rosey-cli run --save-config` persists explicitly supplied path arguments. CLI live moves still require `--no-dry-run`; a stored `behavior.dry_run = false` does not make `rosey-cli run` destructive by default.
 
+Provider results are cached in `cache/provider_cache.ddb` beside `rosey.json`.
+If that cache cannot open, Identify and other provider lookups continue using a
+temporary cache for the current operation or batch. The cause and cache path are
+logged; results from the temporary cache are not saved between sessions. Older
+DecentDB formats require the matching `decentdb-migrate` tool to restore persistent
+caching. Put it in `PATH` or set `ROSEY_DECENTDB_MIGRATE` to its executable path.
+
 Rosey preserves the `ui` section when loading and saving config, although the terminal UI does not use desktop window geometry or splitter settings.
 
 ## Delete Confirmation
